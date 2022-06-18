@@ -3,10 +3,14 @@
 #include "Editor/UnrealEdEngine.h"
 #include "UnrealEdGlobals.h"
 #include "EngineUtils.h"
-
 #include "LevelEditor.h"
 #include "HAL/PlatformApplicationMisc.h"
 #include "GenericPlatform/GenericPlatformApplicationMisc.h"
+
+#if PLATFORM_WINDOWS
+#include "IDesktopPlatform.h"
+#include "Developer/DesktopPlatform/Private/Windows/DesktopPlatformWindows.h"
+#endif
 
 #define LOCTEXT_NAMESPACE "FHTTPLinkModule"
 
@@ -77,6 +81,25 @@ inline bool GetQueryParam(const FHttpServerRequest& Request, const char* Name, F
     return false;
 }
 
+static void MakeEditorWindowForeground()
+{
+    auto Window = FSlateApplication::Get().FindBestParentWindowForDialogs(nullptr, ESlateParentWindowSearchMethod::MainWindow);
+    if (Window) {
+#if PLATFORM_WINDOWS
+        HWND HW = (HWND)Window->GetNativeWindow()->GetOSWindowHandle();
+        DWORD FromTID = ::GetWindowThreadProcessId(GetForegroundWindow(), nullptr);
+        DWORD ToTID = ::GetWindowThreadProcessId(HW, nullptr);
+        ::AttachThreadInput(FromTID, ToTID, true);
+        ::SetForegroundWindow(HW); // == Window->GetNativeWindow()->HACK_ForceToFront()
+        if (FromTID != ToTID) {
+            ::AttachThreadInput(FromTID, ToTID, false);
+        }
+#else
+        Window->GetNativeWindow()->HACK_ForceToFront();
+#endif
+    }
+}
+
 #pragma endregion Utilities
 
 
@@ -111,10 +134,7 @@ bool FHTTPLinkModule::Focus(const FHttpServerRequest& Request, const FHttpResult
     }
     if (Target) {
         // アニメーションを見せるため Unreal Editor を最前面化
-        auto Window = FSlateApplication::Get().FindBestParentWindowForDialogs(nullptr, ESlateParentWindowSearchMethod::MainWindow);
-        if (Window) {
-            Window->GetNativeWindow()->HACK_ForceToFront();
-        }
+        MakeEditorWindowForeground();
 
         // Target 選択
         GEditor->SelectNone(true, false);

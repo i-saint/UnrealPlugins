@@ -41,6 +41,7 @@ public class HTTPLink : ModuleRules
 				"ApplicationCore",
 				"UnrealEd",
 				"LevelEditor",
+				"DesktopPlatform",
 			}
 			);
 		
