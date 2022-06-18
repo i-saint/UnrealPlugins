@@ -83,19 +83,27 @@ inline bool GetQueryParam(const FHttpServerRequest& Request, const char* Name, F
 
 static void MakeEditorWindowForeground()
 {
-    auto Window = FSlateApplication::Get().FindBestParentWindowForDialogs(nullptr, ESlateParentWindowSearchMethod::MainWindow);
-    if (Window) {
+    auto EditorWindow = FSlateApplication::Get().FindBestParentWindowForDialogs(nullptr, ESlateParentWindowSearchMethod::MainWindow);
+    if (EditorWindow) {
 #if PLATFORM_WINDOWS
-        HWND HW = (HWND)Window->GetNativeWindow()->GetOSWindowHandle();
-        DWORD FromTID = ::GetWindowThreadProcessId(GetForegroundWindow(), nullptr);
+        // FWindowsWindow::HACK_ForceToFront() は Windows では SetForegroundWindow() なのだが、
+        // 通常、バックグラウンドのプロセスから SetForegroundWindow() を呼んでもタスクバーのアイコンがフラッシュするだけで最前面にはならない。
+        // ( https://docs.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setforegroundwindow#remarks )
+        // これを回避するため、AttachThreadInput() で一時的にその時点での最前面ウィンドウの状態を間借りする。
+        HWND HW = (HWND)EditorWindow->GetNativeWindow()->GetOSWindowHandle();
+        DWORD FromTID = ::GetWindowThreadProcessId(::GetForegroundWindow(), nullptr);
         DWORD ToTID = ::GetWindowThreadProcessId(HW, nullptr);
-        ::AttachThreadInput(FromTID, ToTID, true);
-        ::SetForegroundWindow(HW); // == Window->GetNativeWindow()->HACK_ForceToFront()
         if (FromTID != ToTID) {
+            ::AttachThreadInput(FromTID, ToTID, true);
+            ::SetForegroundWindow(HW); // == EditorWindow->GetNativeWindow()->HACK_ForceToFront()
             ::AttachThreadInput(FromTID, ToTID, false);
         }
+        else
+        {
+            ::SetForegroundWindow(HW);
+        }
 #else
-        Window->GetNativeWindow()->HACK_ForceToFront();
+        EditorWindow->GetNativeWindow()->HACK_ForceToFront();
 #endif
     }
 }
