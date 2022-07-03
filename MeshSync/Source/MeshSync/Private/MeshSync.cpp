@@ -5,7 +5,7 @@
 #include "MeshSyncCommands.h"
 #include "Misc/MessageDialog.h"
 #include "ToolMenus.h"
-
+#include "UnrealEdGlobals.h"
 #include "RawMesh.h"
 
 static const FName MeshSyncTabName("MeshSync");
@@ -25,7 +25,7 @@ void FMeshSyncModule::StartupModule()
 
     PluginCommands->MapAction(
         FMeshSyncCommands::Get().PluginAction,
-        FExecuteAction::CreateRaw(this, &FMeshSyncModule::PluginButtonClicked),
+        FExecuteAction::CreateRaw(this, &FMeshSyncModule::CreateMeshAsset),
         FCanExecuteAction());
 
     UToolMenus::RegisterStartupCallback(FSimpleMulticastDelegate::FDelegate::CreateRaw(this, &FMeshSyncModule::RegisterMenus));
@@ -197,18 +197,145 @@ static void CreateStaticMesh()
     }
 }
 
-void FMeshSyncModule::PluginButtonClicked()
+void FMeshSyncModule::CreateMeshAsset()
 {
-    //// Put your "OnButtonClicked" stuff here
-    //FText DialogText = FText::Format(
-    //    LOCTEXT("PluginButtonDialogText", "Add code to {0} in {1} to override this button's actions"),
-    //    FText::FromString(TEXT("FMeshSyncModule::PluginButtonClicked()")),
-    //    FText::FromString(TEXT("MeshSync.cpp"))
-    //);
-    //FMessageDialog::Open(EAppMsgType::Ok, DialogText);
-
     CreateStaticMesh();
+    //TestCreateActor();
 }
+
+void FMeshSyncModule::TestCreateActor()
+{
+    AActor* Root = nullptr;
+    if (auto* Selection = GEditor->GetSelectedActors()) {
+        for (FSelectionIterator It(*Selection); It; ++It) {
+            Root = Cast<AActor>(*It);
+            if (Root) {
+                break;
+            }
+        }
+    }
+
+    GetOrCreateActorByPath("/This/Is/A/Test", Root);
+}
+
+
+
+#pragma region Utils
+
+AActor* GetParentActor(AActor* Child)
+{
+    return Child->GetRootComponent()->GetAttachParent()->GetOwner();
+}
+
+AActor* FindChildActor(AActor* Parent, const TCHAR* ChildName)
+{
+    AActor* Ret = nullptr;
+    EachChildActor(Parent, [&Ret, ChildName](AActor* Child) {
+        if (Child->GetActorLabel() == ChildName) {
+            Ret = Child;
+        }
+        });
+    return Ret;
+}
+
+AActor* GetActorByPath(const FString& Path, AActor* Root)
+{
+    TArray<FString> ChildNames;
+    Path.ParseIntoArray(ChildNames, TEXT("/"), false);
+    if (ChildNames.Num() == 0) {
+        return nullptr;
+    }
+    else if (ChildNames[0].Len() == 0) {
+        ChildNames.RemoveAt(0);
+    }
+
+    AActor* Ret = nullptr;
+
+    for (int i = 0; i < ChildNames.Num(); ++i) {
+        if (i == 0) {
+            if (Root) {
+                Ret = FindChildActor(Root, *ChildNames[i]);
+            }
+            else{
+                auto* World = GEditor->GetEditorWorldContext().World();
+                Ret = FindActorByName(World, *ChildNames[i]);
+            }
+        }
+        else {
+            Ret = FindChildActor(Ret, *ChildNames[i]);
+
+        }
+
+        if (!Ret) {
+            return nullptr;
+        }
+    }
+    return Ret;
+
+}
+
+AActor* CreateChildActor(AActor* Parent, const TCHAR* ChildName)
+{
+    FActorSpawnParameters Params;
+    Params.Owner = Parent;
+    Params.Name = FName(ChildName);
+    Params.NameMode = FActorSpawnParameters::ESpawnActorNameMode::Requested;
+
+    auto World = Parent ? Parent->GetWorld() : GEditor->GetEditorWorldContext().World();
+    auto Ret = World->SpawnActor<AActor>(Params);
+    if (Ret) {
+        Ret->SetActorLabel(ChildName);
+    }
+    return Ret;
+}
+
+AActor* GetOrCreateActorByPath(const FString& Path, AActor* Root)
+{
+    TArray<FString> ChildNames;
+    Path.ParseIntoArray(ChildNames, TEXT("/"), false);
+    if (ChildNames.Num() == 0) {
+        return nullptr;
+    }
+    else if (ChildNames[0].Len() == 0) {
+        ChildNames.RemoveAt(0);
+    }
+
+    AActor* Ret = nullptr;
+
+    for (int i = 0; i < ChildNames.Num(); ++i) {
+        if (i == 0) {
+            if (Root) {
+                Ret = FindChildActor(Root, *ChildNames[i]);
+                if (!Ret) {
+                    Ret = CreateChildActor(Root, *ChildNames[i]);
+                }
+            }
+            else {
+                auto* World = GEditor->GetEditorWorldContext().World();
+                Ret = FindActorByName(World, *ChildNames[i]);
+                if (!Ret) {
+                    Ret = CreateChildActor(nullptr, *ChildNames[i]);
+                }
+            }
+        }
+        else {
+            auto Parent = Ret;
+            Ret = FindChildActor(Parent, *ChildNames[i]);
+            if (!Ret) {
+                Ret = CreateChildActor(Parent, *ChildNames[i]);
+            }
+        }
+
+        if (!Ret) {
+            return nullptr;
+        }
+    }
+    return Ret;
+
+}
+
+#pragma endregion Utils
+
 
 #undef LOCTEXT_NAMESPACE
     
