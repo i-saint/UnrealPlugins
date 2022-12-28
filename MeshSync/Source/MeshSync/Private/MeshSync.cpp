@@ -7,6 +7,7 @@
 #include "ToolMenus.h"
 #include "UnrealEdGlobals.h"
 #include "RawMesh.h"
+#include "ScopedTransaction.h"
 
 static const FName MeshSyncTabName("MeshSync");
 
@@ -73,6 +74,7 @@ void FMeshSyncModule::RegisterMenus()
 
 static void CreateStaticMesh()
 {
+    auto UndoScope = FScopedTransaction(LOCTEXT("CreateStaticMesh", "CreateStaticMesh"));
 
     // Object Details
     FString ObjectName = FString("MyObject");
@@ -82,89 +84,82 @@ static void CreateStaticMesh()
     Vertices.Emplace(-86.6, 75, 0);
     Vertices.Emplace(2.13, 25, 175);
     Vertices.Emplace(2.13, -75, 0);
-    int numberOfVertices = Vertices.Num();
+    int NumVertices = Vertices.Num();
 
     struct Face {
-        uint32 v1, v2, v3;
-        int32 materialID;
-        FVector2f uv1, uv2, uv3;
+        uint32 V1, V2, V3;
+        int32 MaterialID;
+        FVector2f UV1, UV2, UV3;
     };
     TArray<Face> Faces;
-    Face oneFace;
-    oneFace = { 1,3,0,  0,  {0,0}, {1,0}, {0.5, 1} };
-    Faces.Add(oneFace);
-    oneFace = { 0,2,1,  1,  {0,0}, {1,0}, {0.5, 1} };
-    Faces.Add(oneFace);
-    oneFace = { 3,2,0,  0,  {0,0}, {1,0}, {0.5, 1} };
-    Faces.Add(oneFace);
-    oneFace = { 1,2,3,  1,  {0,0}, {1,0}, {0.5, 1} };
-    Faces.Add(oneFace);
-    int numberOfFaces = Faces.Num();
+    Faces.Add({ 1,3,0, 0, {0,0}, {1,0}, {0.5, 1} });
+    Faces.Add({ 0,2,1, 1, {0,0}, {1,0}, {0.5, 1} });
+    Faces.Add({ 3,2,0, 0, {0,0}, {1,0}, {0.5, 1} });
+    Faces.Add({ 1,2,3, 1, {0,0}, {1,0}, {0.5, 1} });
+    int NumFaces = Faces.Num();
 
     TArray<FStaticMaterial> Materials; //This should contain the real Materials, this is just an example
     Materials.Add(FStaticMaterial());
     Materials.Add(FStaticMaterial());
-    int numberOfMaterials = Materials.Num();
+    int NumMaterials = Materials.Num();
 
     // Create Package
-    FString pathPackage = FString("/Game/MeshSyncAssets/");
-    FString absolutePathPackage = FPaths::ProjectContentDir() + "/MeshSyncAssets/";
-    FPackageName::RegisterMountPoint(*pathPackage, *absolutePathPackage);
-    UPackage* Package = CreatePackage(*pathPackage);
+    FString PackagePath = FString("/Game/MeshSyncAssets/");
+    FString AbsPackagePath = FPaths::ProjectContentDir() + "/MeshSyncAssets/";
+    FPackageName::RegisterMountPoint(*PackagePath, *AbsPackagePath);
+    UPackage* Package = CreatePackage(*PackagePath);
 
     // Create Static Mesh
     FName StaticMeshName = MakeUniqueObjectName(Package, UStaticMesh::StaticClass(), FName(*ObjectName));
-    UStaticMesh* myStaticMesh = NewObject<UStaticMesh>(Package, StaticMeshName, RF_Public | RF_Standalone);
+    UStaticMesh* StaticMesh = NewObject<UStaticMesh>(Package, StaticMeshName, RF_Public | RF_Standalone | RF_Transactional);
 
-    if (myStaticMesh != NULL)
-    {
-        FRawMesh myRawMesh;
+    if (StaticMesh) {
+        FRawMesh RawMesh;
         FColor WhiteVertex = FColor(255, 255, 255, 255);
         FVector3f Zero3{ 0, 0, 0 };
 
         // Vertices
-        for (int vertIndex = 0; vertIndex < numberOfVertices; vertIndex++) {
-            myRawMesh.VertexPositions.Add(Vertices[vertIndex]);
+        for (int VI = 0; VI < NumVertices; VI++) {
+            RawMesh.VertexPositions.Add(Vertices[VI]);
         }
         // Faces and UV/Normals
-        for (int faceIndex = 0; faceIndex < numberOfFaces; faceIndex++) {
-            myRawMesh.WedgeIndices.Add(Faces[faceIndex].v1);
-            myRawMesh.WedgeIndices.Add(Faces[faceIndex].v2);
-            myRawMesh.WedgeIndices.Add(Faces[faceIndex].v3);
+        for (int FI = 0; FI < NumFaces; FI++) {
+            RawMesh.WedgeIndices.Add(Faces[FI].V1);
+            RawMesh.WedgeIndices.Add(Faces[FI].V2);
+            RawMesh.WedgeIndices.Add(Faces[FI].V3);
 
-            myRawMesh.WedgeColors.Add(WhiteVertex);
-            myRawMesh.WedgeColors.Add(WhiteVertex);
-            myRawMesh.WedgeColors.Add(WhiteVertex);
+            RawMesh.WedgeColors.Add(WhiteVertex);
+            RawMesh.WedgeColors.Add(WhiteVertex);
+            RawMesh.WedgeColors.Add(WhiteVertex);
 
-            myRawMesh.WedgeTangentX.Add(Zero3);
-            myRawMesh.WedgeTangentX.Add(Zero3);
-            myRawMesh.WedgeTangentX.Add(Zero3);
+            RawMesh.WedgeTangentX.Add(Zero3);
+            RawMesh.WedgeTangentX.Add(Zero3);
+            RawMesh.WedgeTangentX.Add(Zero3);
 
-            myRawMesh.WedgeTangentY.Add(Zero3);
-            myRawMesh.WedgeTangentY.Add(Zero3);
-            myRawMesh.WedgeTangentY.Add(Zero3);
+            RawMesh.WedgeTangentY.Add(Zero3);
+            RawMesh.WedgeTangentY.Add(Zero3);
+            RawMesh.WedgeTangentY.Add(Zero3);
 
-            myRawMesh.WedgeTangentZ.Add(Zero3);
-            myRawMesh.WedgeTangentZ.Add(Zero3);
-            myRawMesh.WedgeTangentZ.Add(Zero3);
+            RawMesh.WedgeTangentZ.Add(Zero3);
+            RawMesh.WedgeTangentZ.Add(Zero3);
+            RawMesh.WedgeTangentZ.Add(Zero3);
 
             // Materials
-            myRawMesh.FaceMaterialIndices.Add(Faces[faceIndex].materialID);
+            RawMesh.FaceMaterialIndices.Add(Faces[FI].MaterialID);
 
-            myRawMesh.FaceSmoothingMasks.Add(0xFFFFFFFF); // Phong
+            RawMesh.FaceSmoothingMasks.Add(0xFFFFFFFF); // Phong
 
-            for (int UVIndex = 0; UVIndex < MAX_MESH_TEXTURE_COORDS; UVIndex++)
-            {
-                myRawMesh.WedgeTexCoords[UVIndex].Add(Faces[faceIndex].uv1);
-                myRawMesh.WedgeTexCoords[UVIndex].Add(Faces[faceIndex].uv2);
-                myRawMesh.WedgeTexCoords[UVIndex].Add(Faces[faceIndex].uv3);
+            for (int UVIndex = 0; UVIndex < MAX_MESH_TEXTURE_COORDS; UVIndex++) {
+                RawMesh.WedgeTexCoords[UVIndex].Add(Faces[FI].UV1);
+                RawMesh.WedgeTexCoords[UVIndex].Add(Faces[FI].UV2);
+                RawMesh.WedgeTexCoords[UVIndex].Add(Faces[FI].UV3);
             }
         }
 
         // Saving mesh in the StaticMesh
-        myStaticMesh->SetNumSourceModels(1);
-        auto& SrcModel = myStaticMesh->GetSourceModel(0);
-        SrcModel.RawMeshBulkData->SaveRawMesh(myRawMesh);
+        StaticMesh->SetNumSourceModels(1);
+        auto& SrcModel = StaticMesh->GetSourceModel(0);
+        SrcModel.RawMeshBulkData->SaveRawMesh(RawMesh);
 
         // Model Configuration
         SrcModel.BuildSettings.bUseMikkTSpace = false;
@@ -179,18 +174,18 @@ static void CreateStaticMesh()
 
         // Assign the Materials to the Slots (optional
 
-        for (int32 MaterialID = 0; MaterialID < numberOfMaterials; MaterialID++) {
-            myStaticMesh->GetStaticMaterials().Add(Materials[MaterialID]);
-            myStaticMesh->GetSectionInfoMap().Set(0, MaterialID, FMeshSectionInfo(MaterialID));
+        for (int32 MaterialID = 0; MaterialID < NumMaterials; MaterialID++) {
+            StaticMesh->GetStaticMaterials().Add(Materials[MaterialID]);
+            StaticMesh->GetSectionInfoMap().Set(0, MaterialID, FMeshSectionInfo(MaterialID));
         }
 
         // Processing the StaticMesh and Marking it as not saved
-        myStaticMesh->Build(false);
+        StaticMesh->Build(false);
 
-        myStaticMesh->ImportVersion = EImportStaticMeshVersion::LastVersion;
-        myStaticMesh->CreateBodySetup();
-        myStaticMesh->SetLightingGuid();
-        myStaticMesh->PostEditChange();
+        StaticMesh->ImportVersion = EImportStaticMeshVersion::LastVersion;
+        StaticMesh->CreateBodySetup();
+        StaticMesh->SetLightingGuid();
+        StaticMesh->PostEditChange();
         Package->MarkPackageDirty();
 
         UE_LOG(LogTemp, Log, TEXT("Static Mesh created: %s"), &ObjectName);
