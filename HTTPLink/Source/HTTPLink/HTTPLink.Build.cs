@@ -1,4 +1,5 @@
 using UnrealBuildTool;
+using System.IO;
 
 public class HTTPLink : ModuleRules
 {
@@ -15,7 +16,7 @@ public class HTTPLink : ModuleRules
 		
 		PrivateIncludePaths.AddRange(
 			new string[] {
-				// ... add other private include paths required here ...
+				Path.Combine(EngineDirectory, "Source/Developer/DesktopPlatform/Private"),
 			}
 			);
 			
