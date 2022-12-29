@@ -43,6 +43,7 @@ public class HTTPLink : ModuleRules
 				"UnrealEd",
 				"LevelEditor",
 				"DesktopPlatform",
+				"Json",
 			}
 			);
 		

@@ -7,6 +7,9 @@
 #include "LevelEditorSubsystem.h"
 #include "HAL/PlatformApplicationMisc.h"
 #include "GenericPlatform/GenericPlatformApplicationMisc.h"
+#include "JsonObjectConverter.h"
+#include "Misc/Guid.h"
+
 
 #if PLATFORM_WINDOWS
 #include "IDesktopPlatform.h"
@@ -56,8 +59,12 @@ void FHTTPLinkModule::StartupModule()
         TMap<FString, FHttpRequestHandler> Handlers;
 #define AddHandler(Path, Func) Handlers.Add(Path, [this](auto& Request, auto& OnComplete) { return Func(Request, OnComplete); })
 
-        AddHandler("/focus", OnFocus);
         AddHandler("/exec", OnExec);
+
+        AddHandler("/actor/list", OnListActor);
+        AddHandler("/actor/select", OnSelectActor);
+        AddHandler("/actor/focus", OnFocusActor);
+        AddHandler("/actor/create", OnCreateActor);
 
         AddHandler("/level/new", OnNewLevel);
         AddHandler("/level/load", OnLoadLevel);
@@ -122,8 +129,8 @@ inline bool GetQueryParam(const FHttpServerRequest& Request, const char* Name, T
 template<>
 inline bool GetQueryParam(const FHttpServerRequest& Request, const char* Name, bool& Dst)
 {
-    if (auto* v = Request.QueryParams.Find(Name)) {
-        Dst = v->ToBool();
+    if (auto* V = Request.QueryParams.Find(Name)) {
+        Dst = V->ToBool();
     }
     return false;
 }
@@ -131,11 +138,11 @@ inline bool GetQueryParam(const FHttpServerRequest& Request, const char* Name, b
 template<>
 inline bool GetQueryParam(const FHttpServerRequest& Request, const char* Name, int64& Dst)
 {
-    if (auto* v = Request.QueryParams.Find(Name)) {
-        if (v->StartsWith("0x"))
-            Dst = FParse::HexNumber64(**v);
+    if (auto* V = Request.QueryParams.Find(Name)) {
+        if (V->StartsWith("0x"))
+            Dst = FParse::HexNumber64(**V);
         else
-            Dst = FCString::Atoi64(**v);
+            Dst = FCString::Atoi64(**V);
         return true;
     }
     return false;
@@ -144,12 +151,33 @@ inline bool GetQueryParam(const FHttpServerRequest& Request, const char* Name, i
 template<>
 inline bool GetQueryParam(const FHttpServerRequest& Request, const char* Name, FString& Dst)
 {
-    if (auto* v = Request.QueryParams.Find(Name)) {
-        Dst = *v;
+    if (auto* V = Request.QueryParams.Find(Name)) {
+        Dst = *V;
         return true;
     }
     return false;
 }
+// FName
+template<>
+inline bool GetQueryParam(const FHttpServerRequest& Request, const char* Name, FName& Dst)
+{
+    if (auto* V = Request.QueryParams.Find(Name)) {
+        Dst = FName(*V);
+        return true;
+    }
+    return false;
+}
+// FGuid
+template<>
+inline bool GetQueryParam(const FHttpServerRequest& Request, const char* Name, FGuid& Dst)
+{
+    if (auto* V = Request.QueryParams.Find(Name)) {
+        Dst = FGuid(*V);
+        return true;
+    }
+    return false;
+}
+
 
 static void MakeEditorWindowForeground()
 {
@@ -202,9 +230,9 @@ TSharedRef<FExtender> FHTTPLinkModule::BuildContextMenu(const TSharedRef<FUIComm
 void FHTTPLinkModule::CopyLinkAddress(const TArray<AActor*> Actors)
 {
     if (!Actors.IsEmpty()) {
-        auto Str = FString::Printf(TEXT("http://localhost:%d/focus?id=0x%08x"), PORT, Actors[0]->GetUniqueID());
+        auto Str = FString::Printf(TEXT("http://localhost:%d/actor/focus?guid=%s"), PORT, *Actors[0]->GetActorGuid().ToString());
         FPlatformApplicationMisc::ClipboardCopy(*Str);
-        UE_LOG(LogTemp, Log, TEXT("FHTTPLinkModule::CopyLinkAddress(): %s"), *Str);
+        //UE_LOG(LogTemp, Log, TEXT("FHTTPLinkModule::CopyLinkAddress(): %s"), *Str);
     }
 }
 #pragma endregion ContextMenu
@@ -220,41 +248,6 @@ bool FHTTPLinkModule::Respond(const FHttpResultCallback& Result, const FString& 
     return true;
 }
 
-bool FHTTPLinkModule::OnFocus(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
-{
-    auto* World = GEditor->GetEditorWorldContext().World();
-    if (!World) {
-        return Respond(Result);
-    }
-
-    AActor* Target = nullptr;
-    {
-        FString Name;
-        int64 ID = 0;
-        if (GetQueryParam(Request, "name", Name)) {
-            // 名前で actor を検索
-            Target = FindActor(World, [&](AActor* a) { return a->GetName() == Name; });
-        }
-        if (GetQueryParam(Request, "id", ID)) {
-            // unique ID で actor を検索
-            Target = FindActor(World, [&](AActor* a) { return a->GetUniqueID() == ID; });
-        }
-    }
-    if (Target) {
-        // アニメーションを見せるため Unreal Editor を最前面化
-        MakeEditorWindowForeground();
-
-        // Target 選択
-        GEditor->SelectNone(true, false);
-        GEditor->SelectActor(Target, true, true, true);
-
-        // Target をフォーカス (F キーと同等の操作)
-        GUnrealEd->Exec(World, TEXT("CAMERA ALIGN ACTIVEVIEWPORTONLY"));
-    }
-
-    return Respond(Result);
-}
-
 bool FHTTPLinkModule::OnExec(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
 {
     FString Command;
@@ -264,6 +257,95 @@ bool FHTTPLinkModule::OnExec(const FHttpServerRequest& Request, const FHttpResul
     }
     return Respond(Result, Outputs.Log);
 }
+
+
+bool FHTTPLinkModule::OnListActor(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
+{
+    auto* World = GetEditorWorld();
+    if (!World) {
+        return Respond(Result);
+    }
+
+    return Respond(Result);
+}
+
+static TFunction<AActor* ()> GetActorFinder(const FHttpServerRequest& Request)
+{
+    auto* World = GetEditorWorld();
+    if (!World) {
+        return {};
+    }
+
+    FGuid GUID;
+    FName Name;
+    FString Label;
+    if (GetQueryParam(Request, "guid", GUID)) {
+        // GUID で 検索 (一意)
+        return [=]() { return FindActor(World, [=](AActor* A) { return A->GetActorGuid() == GUID; }); };
+    }
+    else if (GetQueryParam(Request, "name", Name)) {
+        // FName で検索 (一意)
+        return [=]() { return FindActor(World, [&](AActor* a) { return a->GetFName() == Name; }); };
+    }
+    else if (GetQueryParam(Request, "label", Label)) {
+        // Label で検索 (一意ではない)
+        return [=]() { return FindActor(World, [&](AActor* a) { return a->GetActorLabel() == Label; }); };
+    }
+    // Unique ID は変動しうるので対応しない
+    return {};
+}
+
+bool FHTTPLinkModule::OnSelectActor(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
+{
+    bool R = false;
+    bool Additive = false;
+    TFunction<AActor* ()> Finder = GetActorFinder(Request);
+    GetQueryParam(Request, "additive", Additive);
+
+    if (Finder) {
+        if (!Additive) {
+            GEditor->SelectNone(true, false);
+        }
+        if (AActor* Actor = Finder()) {
+            GEditor->SelectActor(Actor, true, true, true);
+            R = true;
+        }
+    }
+    return Respond(Result, FString::Printf(TEXT("%d"), (int)R));
+}
+
+bool FHTTPLinkModule::OnFocusActor(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
+{
+    bool R = false;
+    TFunction<AActor* ()> Finder = GetActorFinder(Request);
+
+    if (Finder) {
+        // アニメーションを見せるため Unreal Editor を最前面化
+        MakeEditorWindowForeground();
+
+        GEditor->SelectNone(true, false);
+        if (AActor* Actor = Finder()) {
+            GEditor->SelectActor(Actor, true, true, true);
+
+            // Actor をフォーカス (F キーと同等の操作)
+            GUnrealEd->Exec(GetEditorWorld(), TEXT("CAMERA ALIGN ACTIVEVIEWPORTONLY"));
+            R = true;
+        }
+    }
+    return Respond(Result, FString::Printf(TEXT("%d"), (int)R));
+}
+
+bool FHTTPLinkModule::OnCreateActor(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
+{
+    auto* World = GetEditorWorld();
+    if (!World) {
+        return Respond(Result);
+    }
+    // todo
+
+    return Respond(Result);
+}
+
 
 bool FHTTPLinkModule::OnNewLevel(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
 {

@@ -33,8 +33,11 @@ public:
     virtual void ShutdownModule() override;
 
     bool Respond(const FHttpResultCallback& Result, const FString& Content = {});
-    bool OnFocus(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
     bool OnExec(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
+    bool OnListActor(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
+    bool OnSelectActor(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
+    bool OnFocusActor(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
+    bool OnCreateActor(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
     bool OnNewLevel(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
     bool OnLoadLevel(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
     bool OnSaveLevel(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
