@@ -1,4 +1,5 @@
-#include "HTTPLink.h"
+﻿#include "HTTPLink.h"
+#include "./InternalTypes.h"
 
 #include "Editor/UnrealEdEngine.h"
 #include "UnrealEdGlobals.h"
@@ -20,6 +21,19 @@
 #define LOCTEXT_NAMESPACE "FHTTPLinkModule"
 
 #pragma region MiscTypes
+FActorComponentSummary::FActorComponentSummary(UActorComponent* Component)
+{
+    Setup(Component);
+}
+
+void FActorComponentSummary::Setup(UActorComponent* Component)
+{
+    if (Component) {
+        TypeName = Component->GetClass()->GetName();
+        Name = Component->GetFName();
+    }
+}
+
 FActorSummary::FActorSummary(AActor* Actor)
 {
     Setup(Actor);
@@ -28,24 +42,21 @@ FActorSummary::FActorSummary(AActor* Actor)
 void FActorSummary::Setup(AActor* Actor)
 {
     if (Actor) {
-        ActorLabel = Actor->GetActorLabel();
-        ActorGUID = Actor->GetActorGuid();
         TypeName = Actor->GetClass()->GetName();
+        Label = Actor->GetActorLabel();
+        Name = Actor->GetFName();
+        GUID = Actor->GetActorGuid();
+        Transform = Actor->GetActorTransform();
+
+        for (auto Component : Actor->GetComponents()) {
+            Components.Emplace(Component);
+        }
     }
 }
 
-void FActorSummaryArray::Add(AActor* Actor)
+TSharedPtr<FJsonValue> FActorSummary::ToJson() const
 {
-    if (Actor) {
-        Data.Emplace(Actor);
-    }
-}
-
-FString FActorSummaryArray::ToJson() const
-{
-    FString Ret;
-    FJsonObjectConverter::UStructToJsonObjectString(*this, Ret);
-    return Ret;
+    return MakeShared<FJsonValueObject>(FJsonObjectConverter::UStructToJsonObject(*this));
 }
 
 
@@ -291,8 +302,13 @@ bool FHTTPLinkModule::Respond(const FHttpResultCallback& Result, const FString& 
     return true;
 }
 
-bool FHTTPLinkModule::RespondJson(const FHttpResultCallback& Result, const FString& Content)
+bool FHTTPLinkModule::RespondJson(const FHttpResultCallback& Result, const TArray<TSharedPtr<FJsonValue>>& Json)
 {
+    FString Content;
+    {
+        auto Writer = TJsonWriterFactory<>::Create(&Content);
+        FJsonSerializer::Serialize(Json, Writer);
+    }
     auto Response = FHttpServerResponse::Create(Content, "application/json");
     Response->Code = EHttpServerResponseCodes::Ok;
     Result(MoveTemp(Response));
@@ -313,11 +329,11 @@ bool FHTTPLinkModule::OnExec(const FHttpServerRequest& Request, const FHttpResul
 
 bool FHTTPLinkModule::OnListActor(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
 {
-    FActorSummaryArray Data;
+    TArray<TSharedPtr<FJsonValue>> Json;
     EachActor(GetEditorWorld(), [&](AActor* Actor) {
-        Data.Add(Actor);
+        Json.Add(FActorSummary(Actor).ToJson());
         });
-    return RespondJson(Result, Data.ToJson());
+    return RespondJson(Result, Json);
 }
 
 static TFunction<AActor* ()> GetActorFinder(const FHttpServerRequest& Request)
