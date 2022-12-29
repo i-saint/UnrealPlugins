@@ -10,6 +10,41 @@
 #include "HttpServerResponse.h"
 #include "IHttpRouter.h"
 
+#include "HTTPLink.generated.h"
+
+
+USTRUCT()
+struct HTTPLINK_API FActorSummary
+{
+    GENERATED_USTRUCT_BODY()
+
+    UPROPERTY()
+    FString ActorLabel;
+
+    UPROPERTY()
+    FGuid ActorGUID;
+
+    UPROPERTY()
+    FString TypeName;
+
+
+    FActorSummary(AActor* Actor = nullptr);
+    void Setup(AActor* Actor);
+};
+
+USTRUCT()
+struct HTTPLINK_API FActorSummaryArray
+{
+    GENERATED_USTRUCT_BODY()
+
+    UPROPERTY()
+    TArray<FActorSummary> Data;
+
+    void Add(AActor* Actor);
+    FString ToJson() const;
+};
+
+
 
 class HTTPLINK_API FHTTPLinkModule : public IModuleInterface
 {
@@ -26,6 +61,7 @@ public:
     };
 
 
+
 public:
     const int PORT = 8110;
 
@@ -33,6 +69,7 @@ public:
     virtual void ShutdownModule() override;
 
     bool Respond(const FHttpResultCallback& Result, const FString& Content = {});
+    bool RespondJson(const FHttpResultCallback& Result, const FString& Content);
     bool OnExec(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
     bool OnListActor(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
     bool OnSelectActor(const FHttpServerRequest& Request, const FHttpResultCallback& Result);

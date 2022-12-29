@@ -44,6 +44,7 @@ public class HTTPLink : ModuleRules
 				"LevelEditor",
 				"DesktopPlatform",
 				"Json",
+				"JsonUtilities",
 			}
 			);
 		

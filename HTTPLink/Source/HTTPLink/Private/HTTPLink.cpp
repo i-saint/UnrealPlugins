@@ -9,6 +9,7 @@
 #include "GenericPlatform/GenericPlatformApplicationMisc.h"
 #include "JsonObjectConverter.h"
 #include "Misc/Guid.h"
+#include "JsonObjectConverter.h"
 
 
 #if PLATFORM_WINDOWS
@@ -18,7 +19,36 @@
 
 #define LOCTEXT_NAMESPACE "FHTTPLinkModule"
 
-#pragma region FSimpleOutputDevice
+#pragma region MiscTypes
+FActorSummary::FActorSummary(AActor* Actor)
+{
+    Setup(Actor);
+}
+
+void FActorSummary::Setup(AActor* Actor)
+{
+    if (Actor) {
+        ActorLabel = Actor->GetActorLabel();
+        ActorGUID = Actor->GetActorGuid();
+        TypeName = Actor->GetClass()->GetName();
+    }
+}
+
+void FActorSummaryArray::Add(AActor* Actor)
+{
+    if (Actor) {
+        Data.Emplace(Actor);
+    }
+}
+
+FString FActorSummaryArray::ToJson() const
+{
+    FString Ret;
+    FJsonObjectConverter::UStructToJsonObjectString(*this, Ret);
+    return Ret;
+}
+
+
 FHTTPLinkModule::FSimpleOutputDevice::FSimpleOutputDevice()
     : Super()
 {
@@ -33,7 +63,7 @@ void FHTTPLinkModule::FSimpleOutputDevice::Clear()
 {
     Log.Empty();
 }
-#pragma endregion FSimpleOutputDevice
+#pragma endregion MiscTypes
 
 
 #pragma region Startup / Shutdown
@@ -111,14 +141,27 @@ static UWorld* GetEditorWorld()
     return GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
 }
 
-template<class ActorType = AActor, class Cond>
-inline ActorType* FindActor(UWorld* World, Cond&& cond)
+template<class ActorType = AActor, class Func>
+inline size_t EachActor(UWorld* World, Func&& F)
 {
-    auto It = TActorIterator<ActorType>(World);
-    while (It) {
-        if (cond(*It))
-            return *It;
-        ++It;
+    size_t Ret = 0;
+    if (World) {
+        for (auto It = TActorIterator<ActorType>(World); It; ++It) {
+            F(*It);
+            ++Ret;
+        }
+    }
+    return Ret;
+}
+
+template<class ActorType = AActor, class Cond>
+inline ActorType* FindActor(UWorld* World, Cond&& C)
+{
+    if (World) {
+        for (auto It = TActorIterator<ActorType>(World); It; ++It) {
+            if (C(*It))
+                return *It;
+        }
     }
     return nullptr;
 }
@@ -248,6 +291,15 @@ bool FHTTPLinkModule::Respond(const FHttpResultCallback& Result, const FString& 
     return true;
 }
 
+bool FHTTPLinkModule::RespondJson(const FHttpResultCallback& Result, const FString& Content)
+{
+    auto Response = FHttpServerResponse::Create(Content, "application/json");
+    Response->Code = EHttpServerResponseCodes::Ok;
+    Result(MoveTemp(Response));
+    return true;
+}
+
+
 bool FHTTPLinkModule::OnExec(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
 {
     FString Command;
@@ -261,12 +313,11 @@ bool FHTTPLinkModule::OnExec(const FHttpServerRequest& Request, const FHttpResul
 
 bool FHTTPLinkModule::OnListActor(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
 {
-    auto* World = GetEditorWorld();
-    if (!World) {
-        return Respond(Result);
-    }
-
-    return Respond(Result);
+    FActorSummaryArray Data;
+    EachActor(GetEditorWorld(), [&](AActor* Actor) {
+        Data.Add(Actor);
+        });
+    return RespondJson(Result, Data.ToJson());
 }
 
 static TFunction<AActor* ()> GetActorFinder(const FHttpServerRequest& Request)
@@ -281,15 +332,15 @@ static TFunction<AActor* ()> GetActorFinder(const FHttpServerRequest& Request)
     FString Label;
     if (GetQueryParam(Request, "guid", GUID)) {
         // GUID で 検索 (一意)
-        return [=]() { return FindActor(World, [=](AActor* A) { return A->GetActorGuid() == GUID; }); };
+        return [World, GUID]() { return FindActor(World, [&](AActor* A) { return A->GetActorGuid() == GUID; }); };
     }
     else if (GetQueryParam(Request, "name", Name)) {
         // FName で検索 (一意)
-        return [=]() { return FindActor(World, [&](AActor* a) { return a->GetFName() == Name; }); };
+        return [World, Name]() { return FindActor(World, [&](AActor* A) { return A->GetFName() == Name; }); };
     }
     else if (GetQueryParam(Request, "label", Label)) {
         // Label で検索 (一意ではない)
-        return [=]() { return FindActor(World, [&](AActor* a) { return a->GetActorLabel() == Label; }); };
+        return [World, Label]() { return FindActor(World, [&](AActor* A) { return A->GetActorLabel() == Label; }); };
     }
     // Unique ID は変動しうるので対応しない
     return {};
