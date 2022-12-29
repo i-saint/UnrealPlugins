@@ -31,19 +31,28 @@ public:
     virtual void StartupModule() override;
     virtual void ShutdownModule() override;
 
-    bool Respond(const FHttpResultCallback& Result, const FString& Content = {});
-    bool RespondJson(const FHttpResultCallback& Result, const TArray<TSharedPtr<FJsonValue>>& Json);
+    TSharedRef<FExtender> BuildContextMenu(const TSharedRef<FUICommandList> CommandList, const TArray<AActor*> Actors);
+    void CopyLinkAddress(const TArray<AActor*> Actors);
+
+    // editor commands
     bool OnExec(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
+
+    // actor commands
     bool OnListActor(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
     bool OnSelectActor(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
     bool OnFocusActor(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
     bool OnCreateActor(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
+    bool OnDeleteActor(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
+    bool OnMergeActor(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
+
+    // level commands
     bool OnNewLevel(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
     bool OnLoadLevel(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
     bool OnSaveLevel(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
 
-    TSharedRef<FExtender> BuildContextMenu(const TSharedRef<FUICommandList> CommandList, const TArray<AActor*> Actors);
-    void CopyLinkAddress(const TArray<AActor*> Actors);
+    // asset commands
+    bool OnListAsset(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
+    bool OnImportAsset(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
 
 private:
     FSimpleOutputDevice Outputs;

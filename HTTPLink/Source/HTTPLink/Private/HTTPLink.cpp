@@ -6,10 +6,11 @@
 #include "EngineUtils.h"
 #include "LevelEditor.h"
 #include "LevelEditorSubsystem.h"
+#include "AssetRegistry/AssetRegistryModule.h"
 #include "HAL/PlatformApplicationMisc.h"
 #include "GenericPlatform/GenericPlatformApplicationMisc.h"
-#include "JsonObjectConverter.h"
 #include "Misc/Guid.h"
+#include "AssetRegistry/AssetData.h"
 #include "JsonObjectConverter.h"
 
 
@@ -20,134 +21,8 @@
 
 #define LOCTEXT_NAMESPACE "FHTTPLinkModule"
 
-#pragma region MiscTypes
-FActorComponentSummary::FActorComponentSummary(UActorComponent* Component)
-{
-    Setup(Component);
-}
-
-void FActorComponentSummary::Setup(UActorComponent* Component)
-{
-    if (Component) {
-        TypeName = Component->GetClass()->GetName();
-        Name = Component->GetFName();
-    }
-}
-
-FActorSummary::FActorSummary(AActor* Actor)
-{
-    Setup(Actor);
-}
-
-void FActorSummary::Setup(AActor* Actor)
-{
-    if (Actor) {
-        TypeName = Actor->GetClass()->GetName();
-        Label = Actor->GetActorLabel();
-        Name = Actor->GetFName();
-        GUID = Actor->GetActorGuid();
-        Transform = Actor->GetActorTransform();
-
-        for (auto Component : Actor->GetComponents()) {
-            Components.Emplace(Component);
-        }
-    }
-}
-
-TSharedPtr<FJsonValue> FActorSummary::ToJson() const
-{
-    return MakeShared<FJsonValueObject>(FJsonObjectConverter::UStructToJsonObject(*this));
-}
-
-
-FHTTPLinkModule::FSimpleOutputDevice::FSimpleOutputDevice()
-    : Super()
-{
-}
-
-void FHTTPLinkModule::FSimpleOutputDevice::Serialize(const TCHAR* V, ELogVerbosity::Type Verbosity, const class FName& Category)
-{
-    Log += V;
-}
-
-void FHTTPLinkModule::FSimpleOutputDevice::Clear()
-{
-    Log.Empty();
-}
-#pragma endregion MiscTypes
-
-
-#pragma region Startup / Shutdown
-void FHTTPLinkModule::StartupModule()
-{
-    GlobalLock = FPlatformProcess::NewInterprocessSynchObject(TEXT("Global\\ue-ist-httplink"), true);
-    if (GlobalLock) {
-        const uint64 MaxNanosecondsToWait = 10 * 1000000ULL; // 10ms
-        if (!GlobalLock->TryLock(MaxNanosecondsToWait)) {
-            // 他のプロセスが lock してる
-            FPlatformProcess::DeleteInterprocessSynchObject(GlobalLock);
-            GlobalLock = nullptr;
-        }
-    }
-
-    if (GlobalLock) {
-        GConfig->SetString(TEXT("HTTPServer.Listeners"), TEXT("DefaultBindAddress"), TEXT("any"), GEngineIni);
-
-        // HTTP の listening 開始
-        auto& HttpServerModule = FHttpServerModule::Get();
-        Router = HttpServerModule.GetHttpRouter(PORT);
-
-        TMap<FString, FHttpRequestHandler> Handlers;
-#define AddHandler(Path, Func) Handlers.Add(Path, [this](auto& Request, auto& OnComplete) { return Func(Request, OnComplete); })
-
-        AddHandler("/exec", OnExec);
-
-        AddHandler("/actor/list", OnListActor);
-        AddHandler("/actor/select", OnSelectActor);
-        AddHandler("/actor/focus", OnFocusActor);
-        AddHandler("/actor/create", OnCreateActor);
-
-        AddHandler("/level/new", OnNewLevel);
-        AddHandler("/level/load", OnLoadLevel);
-        AddHandler("/level/save", OnSaveLevel);
-
-#undef AddHandler
-
-        for (auto& KVP : Handlers) {
-            HRoutes.Push(
-                Router->BindRoute(KVP.Key, EHttpServerRequestVerbs::VERB_GET | EHttpServerRequestVerbs::VERB_POST, KVP.Value)
-            );
-        }
-        HttpServerModule.StartAllListeners();
-    }
-
-
-    // コンテキストメニュー登録
-    auto& Extenders = FModuleManager::GetModuleChecked<FLevelEditorModule>(TEXT("LevelEditor")).GetAllLevelViewportContextMenuExtenders();
-    Extenders.Add(FLevelEditorModule::FLevelViewportMenuExtender_SelectedActors::CreateRaw(this, &FHTTPLinkModule::BuildContextMenu));
-}
-
-void FHTTPLinkModule::ShutdownModule()
-{
-    // コンテキストメニュー登録解除のうまい方法がわからず…
-    //auto& Extenders = FModuleManager::GetModuleChecked<FLevelEditorModule>(TEXT("LevelEditor")).GetAllLevelViewportContextMenuExtenders();
-
-    for (auto& H : HRoutes) {
-        Router->UnbindRoute(H);
-    }
-    // 他への影響を考えて FHttpServerModule::Get().StopAllListeners() はしない
-
-    if (GlobalLock) {
-        GlobalLock->Unlock();
-        FPlatformProcess::DeleteInterprocessSynchObject(GlobalLock);
-        GlobalLock = nullptr;
-    }
-}
-#pragma endregion Startup / Shutdown
-
-
 #pragma region Utilities
-static UWorld* GetEditorWorld()
+static inline UWorld* GetEditorWorld()
 {
     return GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
 }
@@ -259,7 +134,216 @@ static void MakeEditorWindowForeground()
 #endif
     }
 }
+
+static bool Respond(const FHttpResultCallback& Result, const FString& Content = {})
+{
+    // FHttpServerResponse::Ok() は 204 No Content を返すので使わない方がいい
+    auto Response = FHttpServerResponse::Create(Content, "text/plain");
+    Response->Code = EHttpServerResponseCodes::Ok;
+    Result(MoveTemp(Response));
+    return true;
+}
+
+static bool RespondJson(const FHttpResultCallback& Result, TSharedPtr<FJsonObject> Json)
+{
+    FString Content;
+    {
+        auto Writer = TJsonWriterFactory<>::Create(&Content);
+        FJsonSerializer::Serialize(Json.ToSharedRef(), Writer);
+    }
+    auto Response = FHttpServerResponse::Create(Content, "application/json");
+    Response->Code = EHttpServerResponseCodes::Ok;
+    Result(MoveTemp(Response));
+    return true;
+}
+
+static bool RespondJson(const FHttpResultCallback& Result, const TArray<TSharedPtr<FJsonValue>>& Json)
+{
+    FString Content;
+    {
+        auto Writer = TJsonWriterFactory<>::Create(&Content);
+        FJsonSerializer::Serialize(Json, Writer);
+    }
+    auto Response = FHttpServerResponse::Create(Content, "application/json");
+    Response->Code = EHttpServerResponseCodes::Ok;
+    Result(MoveTemp(Response));
+    return true;
+}
+
+template<class T>
+static bool MatchClass(const FAssetData& Asset)
+{
+#if ENGINE_MAJOR_VERSION >= 5 && ENGINE_MINOR_VERSION >= 1
+    return Asset.AssetClassPath.GetAssetName() == T::StaticClass()->GetFName();
+#else
+    return Asset.AssetClass == T::StaticClass()->GetFName();
+#endif
+}
+
+static FString GetObectPathStr(const FAssetData& Asset)
+{
+#if ENGINE_MAJOR_VERSION >= 5 && ENGINE_MINOR_VERSION >= 1
+    return Asset.GetObjectPathString();
+#else
+    return Asset.ObjectPath.ToString();
+#endif
+}
 #pragma endregion Utilities
+
+
+#pragma region InternalTypes
+FActorComponentSummary::FActorComponentSummary(UActorComponent* Component)
+{
+    Setup(Component);
+}
+
+void FActorComponentSummary::Setup(UActorComponent* Component)
+{
+    if (Component) {
+        TypeName = Component->GetClass()->GetName();
+        Name = Component->GetFName();
+    }
+}
+
+FActorSummary::FActorSummary(AActor* Actor)
+{
+    Setup(Actor);
+}
+
+void FActorSummary::Setup(AActor* Actor)
+{
+    if (Actor) {
+        TypeName = Actor->GetClass()->GetName();
+        Label = Actor->GetActorLabel();
+        Name = Actor->GetFName();
+        GUID = Actor->GetActorGuid();
+        Transform = Actor->GetActorTransform();
+
+        for (auto Component : Actor->GetComponents()) {
+            Components.Emplace(Component);
+        }
+    }
+}
+
+TSharedPtr<FJsonObject> FActorSummary::ToJson() const
+{
+    return FJsonObjectConverter::UStructToJsonObject(*this);
+}
+
+
+FAssetSummary::FAssetSummary()
+{
+}
+
+FAssetSummary::FAssetSummary(const FAssetData& Data)
+{
+    Setup(Data);
+}
+
+void FAssetSummary::Setup(const FAssetData& Data)
+{
+    TypeName = Data.GetClass()->GetName();
+    AssetName = Data.AssetName;
+    ObjectPath = GetObectPathStr(Data);
+    PackageName = Data.PackageName;
+}
+
+TSharedPtr<FJsonObject> FAssetSummary::ToJson() const
+{
+    return FJsonObjectConverter::UStructToJsonObject(*this);
+}
+
+
+
+FHTTPLinkModule::FSimpleOutputDevice::FSimpleOutputDevice()
+    : Super()
+{
+}
+
+void FHTTPLinkModule::FSimpleOutputDevice::Serialize(const TCHAR* V, ELogVerbosity::Type Verbosity, const class FName& Category)
+{
+    Log += V;
+}
+
+void FHTTPLinkModule::FSimpleOutputDevice::Clear()
+{
+    Log.Empty();
+}
+#pragma endregion InternalTypes
+
+
+#pragma region Startup / Shutdown
+void FHTTPLinkModule::StartupModule()
+{
+    GlobalLock = FPlatformProcess::NewInterprocessSynchObject(TEXT("Global\\ue-ist-httplink"), true);
+    if (GlobalLock) {
+        const uint64 MaxNanosecondsToWait = 10 * 1000000ULL; // 10ms
+        if (!GlobalLock->TryLock(MaxNanosecondsToWait)) {
+            // 他のプロセスが lock してる
+            FPlatformProcess::DeleteInterprocessSynchObject(GlobalLock);
+            GlobalLock = nullptr;
+        }
+    }
+
+    if (GlobalLock) {
+        GConfig->SetString(TEXT("HTTPServer.Listeners"), TEXT("DefaultBindAddress"), TEXT("any"), GEngineIni);
+
+        // HTTP の listening 開始
+        auto& HttpServerModule = FHttpServerModule::Get();
+        Router = HttpServerModule.GetHttpRouter(PORT);
+
+        TMap<FString, FHttpRequestHandler> Handlers;
+#define AddHandler(Path, Func) Handlers.Add(Path, [this](auto& Request, auto& OnComplete) { return Func(Request, OnComplete); })
+
+        AddHandler("/exec", OnExec);
+
+        AddHandler("/actor/list", OnListActor);
+        AddHandler("/actor/select", OnSelectActor);
+        AddHandler("/actor/focus", OnFocusActor);
+        AddHandler("/actor/create", OnCreateActor);
+        AddHandler("/actor/delete", OnDeleteActor);
+        AddHandler("/actor/merge", OnMergeActor);
+
+        AddHandler("/level/new", OnNewLevel);
+        AddHandler("/level/load", OnLoadLevel);
+        AddHandler("/level/save", OnSaveLevel);
+
+        AddHandler("/asset/list", OnListAsset);
+        AddHandler("/asset/import", OnImportAsset);
+
+#undef AddHandler
+
+        for (auto& KVP : Handlers) {
+            HRoutes.Push(
+                Router->BindRoute(KVP.Key, EHttpServerRequestVerbs::VERB_GET | EHttpServerRequestVerbs::VERB_POST, KVP.Value)
+            );
+        }
+        HttpServerModule.StartAllListeners();
+    }
+
+
+    // コンテキストメニュー登録
+    auto& Extenders = FModuleManager::GetModuleChecked<FLevelEditorModule>(TEXT("LevelEditor")).GetAllLevelViewportContextMenuExtenders();
+    Extenders.Add(FLevelEditorModule::FLevelViewportMenuExtender_SelectedActors::CreateRaw(this, &FHTTPLinkModule::BuildContextMenu));
+}
+
+void FHTTPLinkModule::ShutdownModule()
+{
+    // コンテキストメニュー登録解除のうまい方法がわからず…
+    //auto& Extenders = FModuleManager::GetModuleChecked<FLevelEditorModule>(TEXT("LevelEditor")).GetAllLevelViewportContextMenuExtenders();
+
+    for (auto& H : HRoutes) {
+        Router->UnbindRoute(H);
+    }
+    // 他への影響を考えて FHttpServerModule::Get().StopAllListeners() はしない
+
+    if (GlobalLock) {
+        GlobalLock->Unlock();
+        FPlatformProcess::DeleteInterprocessSynchObject(GlobalLock);
+        GlobalLock = nullptr;
+    }
+}
+#pragma endregion Startup / Shutdown
 
 
 #pragma region ContextMenu
@@ -267,14 +351,12 @@ TSharedRef<FExtender> FHTTPLinkModule::BuildContextMenu(const TSharedRef<FUIComm
 {
     TSharedPtr<FExtender> Extender = MakeShareable(new FExtender());
     auto Build = [=](FMenuBuilder& Builder) {
-        Builder.BeginSection("ist", LOCTEXT("ist", "ist"));
         Builder.AddMenuEntry(
-            LOCTEXT("CopyLinkAddress", "リンクのアドレスをコピー"),
+            LOCTEXT("CopyLinkAddress", "Copy Link Address"),
             {},
             FSlateIcon(FAppStyle::GetAppStyleSetName(), "Actors.Attach"),
             FExecuteAction::CreateLambda([=]() { CopyLinkAddress(Actors); })
         );
-        Builder.EndSection();
     };
     Extender->AddMenuExtension("ActorTypeTools", EExtensionHook::After, CommandList,
         FMenuExtensionDelegate::CreateLambda(Build));
@@ -292,30 +374,7 @@ void FHTTPLinkModule::CopyLinkAddress(const TArray<AActor*> Actors)
 #pragma endregion ContextMenu
 
 
-#pragma region HTTP Command
-bool FHTTPLinkModule::Respond(const FHttpResultCallback& Result, const FString& Content)
-{
-    // FHttpServerResponse::Ok() は 204 No Content を返すので使わない方がいい
-    auto Response = FHttpServerResponse::Create(Content, "text/plain");
-    Response->Code = EHttpServerResponseCodes::Ok;
-    Result(MoveTemp(Response));
-    return true;
-}
-
-bool FHTTPLinkModule::RespondJson(const FHttpResultCallback& Result, const TArray<TSharedPtr<FJsonValue>>& Json)
-{
-    FString Content;
-    {
-        auto Writer = TJsonWriterFactory<>::Create(&Content);
-        FJsonSerializer::Serialize(Json, Writer);
-    }
-    auto Response = FHttpServerResponse::Create(Content, "application/json");
-    Response->Code = EHttpServerResponseCodes::Ok;
-    Result(MoveTemp(Response));
-    return true;
-}
-
-
+#pragma region Editor Commands
 bool FHTTPLinkModule::OnExec(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
 {
     FString Command;
@@ -325,13 +384,15 @@ bool FHTTPLinkModule::OnExec(const FHttpServerRequest& Request, const FHttpResul
     }
     return Respond(Result, Outputs.Log);
 }
+#pragma endregion Editor Commands
 
 
+#pragma region Actor Commands
 bool FHTTPLinkModule::OnListActor(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
 {
     TArray<TSharedPtr<FJsonValue>> Json;
     EachActor(GetEditorWorld(), [&](AActor* Actor) {
-        Json.Add(FActorSummary(Actor).ToJson());
+        Json.Add(MakeShared<FJsonValueObject>(FActorSummary(Actor).ToJson()));
         });
     return RespondJson(Result, Json);
 }
@@ -404,16 +465,25 @@ bool FHTTPLinkModule::OnFocusActor(const FHttpServerRequest& Request, const FHtt
 
 bool FHTTPLinkModule::OnCreateActor(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
 {
-    auto* World = GetEditorWorld();
-    if (!World) {
-        return Respond(Result);
-    }
     // todo
-
     return Respond(Result);
 }
 
+bool FHTTPLinkModule::OnDeleteActor(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
+{
+    // todo
+    return Respond(Result);
+}
 
+bool FHTTPLinkModule::OnMergeActor(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
+{
+    // todo
+    return Respond(Result);
+}
+#pragma endregion Actor Commands
+
+
+#pragma region Level Commands
 bool FHTTPLinkModule::OnNewLevel(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
 {
     if (!GEditor) {
@@ -472,7 +542,28 @@ bool FHTTPLinkModule::OnSaveLevel(const FHttpServerRequest& Request, const FHttp
     }
     return Respond(Result, FString::Printf(TEXT("%d"), (int)R));
 }
-#pragma endregion HTTP Command
+#pragma endregion Level Commands
+
+
+#pragma region Asset Commands
+bool FHTTPLinkModule::OnListAsset(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
+{
+    TArray<TSharedPtr<FJsonValue>> Json;
+    auto& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
+    AssetRegistryModule.Get().EnumerateAllAssets([&](const FAssetData& Data) {
+        Json.Add(MakeShared<FJsonValueObject>(FAssetSummary(Data).ToJson()));
+        return true;
+        });
+    return RespondJson(Result, Json);
+}
+
+bool FHTTPLinkModule::OnImportAsset(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
+{
+    // todo
+    return Respond(Result);
+}
+#pragma endregion Asset Commands
+
 
 #undef LOCTEXT_NAMESPACE
     

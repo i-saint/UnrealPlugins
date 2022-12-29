@@ -37,9 +37,9 @@ public class HTTPLink : ModuleRules
 				"Engine",
 				"Slate",
 				"SlateCore",
-
 				"HTTPServer",
 				"ApplicationCore",
+				"AssetRegistry",
 				"UnrealEd",
 				"LevelEditor",
 				"DesktopPlatform",
