@@ -6,11 +6,13 @@
 #include "EngineUtils.h"
 #include "LevelEditor.h"
 #include "LevelEditorSubsystem.h"
+#include "Subsystems/EditorActorSubsystem.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "HAL/PlatformApplicationMisc.h"
 #include "GenericPlatform/GenericPlatformApplicationMisc.h"
 #include "Misc/Guid.h"
 #include "AssetRegistry/AssetData.h"
+#include "ScopedTransaction.h"
 #include "JsonObjectConverter.h"
 
 
@@ -102,6 +104,19 @@ inline bool GetQueryParam(const FHttpServerRequest& Request, const char* Name, F
 {
     if (auto* V = Request.QueryParams.Find(Name)) {
         Dst = FGuid(*V);
+        return true;
+    }
+    return false;
+}
+// FVector
+template<>
+inline bool GetQueryParam(const FHttpServerRequest& Request, const char* Name, FVector& Dst)
+{
+    if (auto* V = Request.QueryParams.Find(Name)) {
+        float X, Y, Z;
+        if (swscanf_s(**V, TEXT("%f,%f,%f"), &X, &Y, &Z) == 3) {
+            Dst = FVector(X, Y, Z);
+        }
         return true;
     }
     return false;
@@ -465,8 +480,34 @@ bool FHTTPLinkModule::OnFocusActor(const FHttpServerRequest& Request, const FHtt
 
 bool FHTTPLinkModule::OnCreateActor(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
 {
-    // todo
-    return Respond(Result);
+    if (!GEditor) {
+        return Respond(Result);
+    }
+
+    FString Label;
+    FVector Location = FVector::Zero();
+    FString AssetPath;
+    GetQueryParam(Request, "label", Label);
+    GetQueryParam(Request, "location", Location);
+    GetQueryParam(Request, "assetpath", AssetPath);
+
+    FString Ret;
+    if (!AssetPath.IsEmpty()) {
+        auto& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
+        FAssetData AssetData = AssetRegistryModule.Get().GetAssetByObjectPath(AssetPath);
+        if (AssetData.IsValid()) {
+            auto UndoScope = FScopedTransaction(LOCTEXT("OnCreateActor", "OnCreateActor"));
+            auto* EditorActorSubsystem = GEditor->GetEditorSubsystem<UEditorActorSubsystem>();
+            AActor* Actor = EditorActorSubsystem->SpawnActorFromObject(AssetData.GetAsset(), Location);
+            if (Actor) {
+                if (!Label.IsEmpty()) {
+                    Actor->SetActorLabel(Label);
+                }
+                Ret = Actor->GetActorGuid().ToString();
+            }
+        }
+    }
+    return Respond(Result, Ret);
 }
 
 bool FHTTPLinkModule::OnDeleteActor(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
