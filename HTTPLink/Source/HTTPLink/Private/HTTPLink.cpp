@@ -14,14 +14,59 @@
 
 #define LOCTEXT_NAMESPACE "FHTTPLinkModule"
 
+#pragma region FSimpleOutputDevice
+FSimpleOutputDevice::FSimpleOutputDevice()
+    : Super()
+{
+}
+
+void FSimpleOutputDevice::Serialize(const TCHAR* V, ELogVerbosity::Type Verbosity, const class FName& Category)
+{
+    Log += V;
+}
+
+void FSimpleOutputDevice::Clear()
+{
+    Log.Empty();
+}
+#pragma endregion FSimpleOutputDevice
+
+
+#pragma region Startup / Shutdown
 void FHTTPLinkModule::StartupModule()
 {
-    // HTTP の listening 開始
-    auto& HttpServerModule = FHttpServerModule::Get();
-    m_Router = HttpServerModule.GetHttpRouter(PORT);
-    m_HFocus = m_Router->BindRoute(FString("/focus"), EHttpServerRequestVerbs::VERB_GET | EHttpServerRequestVerbs::VERB_POST,
-        [this](auto& Request, auto& Result) { return Focus(Request, Result); });
-    HttpServerModule.StartAllListeners();
+    GlobalLock = FPlatformProcess::NewInterprocessSynchObject(TEXT("Global\\ue-ist-httplink"), true);
+    if (GlobalLock) {
+        const uint64 MaxNanosecondsToWait = 10 * 1000000ULL; // 10ms
+        if (!GlobalLock->TryLock(MaxNanosecondsToWait)) {
+            // 他のプロセスが lock してる
+            FPlatformProcess::DeleteInterprocessSynchObject(GlobalLock);
+            GlobalLock = nullptr;
+        }
+    }
+
+    if (GlobalLock) {
+        GConfig->SetString(TEXT("HTTPServer.Listeners"), TEXT("DefaultBindAddress"), TEXT("any"), GEngineIni);
+
+        // HTTP の listening 開始
+        auto& HttpServerModule = FHttpServerModule::Get();
+        Router = HttpServerModule.GetHttpRouter(PORT);
+
+        TMap<FString, FHttpRequestHandler> Handlers;
+#define AddHandler(Path, Func) Handlers.Add(Path, [this](auto& Request, auto& OnComplete) { return Func(Request, OnComplete); })
+
+        AddHandler("/focus", OnFocus);
+        AddHandler("/exec", OnExec);
+
+#undef AddHandler
+
+        for (auto& KVP : Handlers) {
+            HRoutes.Push(
+                Router->BindRoute(KVP.Key, EHttpServerRequestVerbs::VERB_GET | EHttpServerRequestVerbs::VERB_POST, KVP.Value)
+            );
+        }
+        HttpServerModule.StartAllListeners();
+    }
 
 
     // コンテキストメニュー登録
@@ -34,14 +79,25 @@ void FHTTPLinkModule::ShutdownModule()
     // コンテキストメニュー登録解除のうまい方法がわからず…
     //auto& Extenders = FModuleManager::GetModuleChecked<FLevelEditorModule>(TEXT("LevelEditor")).GetAllLevelViewportContextMenuExtenders();
 
-    m_Router->UnbindRoute(m_HFocus);
-    m_Router = {};
-    m_HFocus = {};
+    for (auto& H : HRoutes) {
+        Router->UnbindRoute(H);
+    }
     // 他への影響を考えて FHttpServerModule::Get().StopAllListeners() はしない
+
+    if (GlobalLock) {
+        GlobalLock->Unlock();
+        FPlatformProcess::DeleteInterprocessSynchObject(GlobalLock);
+        GlobalLock = nullptr;
+    }
 }
+#pragma endregion Startup / Shutdown
 
 
 #pragma region Utilities
+static UWorld* GetEditorWorld()
+{
+    return GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+}
 
 template<class ActorType = AActor, class Cond>
 inline ActorType* FindActor(UWorld* World, Cond&& cond)
@@ -107,20 +163,50 @@ static void MakeEditorWindowForeground()
 #endif
     }
 }
-
 #pragma endregion Utilities
 
 
-bool FHTTPLinkModule::Respond(const FHttpResultCallback& Result, FString&& Content)
+#pragma region ContextMenu
+TSharedRef<FExtender> FHTTPLinkModule::BuildContextMenu(const TSharedRef<FUICommandList> CommandList, const TArray<AActor*> Actors)
+{
+    TSharedPtr<FExtender> Extender = MakeShareable(new FExtender());
+    auto Build = [=](FMenuBuilder& Builder) {
+        Builder.BeginSection("ist", LOCTEXT("ist", "ist"));
+        Builder.AddMenuEntry(
+            LOCTEXT("CopyLinkAddress", "リンクのアドレスをコピー"),
+            {},
+            FSlateIcon(FAppStyle::GetAppStyleSetName(), "Actors.Attach"),
+            FExecuteAction::CreateLambda([=]() { CopyLinkAddress(Actors); })
+        );
+        Builder.EndSection();
+    };
+    Extender->AddMenuExtension("ActorTypeTools", EExtensionHook::After, CommandList,
+        FMenuExtensionDelegate::CreateLambda(Build));
+    return Extender.ToSharedRef();
+}
+
+void FHTTPLinkModule::CopyLinkAddress(const TArray<AActor*> Actors)
+{
+    if (!Actors.IsEmpty()) {
+        auto Str = FString::Printf(TEXT("http://localhost:%d/focus?id=0x%08x"), PORT, Actors[0]->GetUniqueID());
+        FPlatformApplicationMisc::ClipboardCopy(*Str);
+        UE_LOG(LogTemp, Log, TEXT("FHTTPLinkModule::CopyLinkAddress(): %s"), *Str);
+    }
+}
+#pragma endregion ContextMenu
+
+
+#pragma region HTTP Command
+bool FHTTPLinkModule::Respond(const FHttpResultCallback& Result, const FString& Content)
 {
     // FHttpServerResponse::Ok() は 204 No Content を返すので使わない方がいい
-    auto Response = FHttpServerResponse::Create(MoveTemp(Content), "text/plain");
+    auto Response = FHttpServerResponse::Create(Content, "text/plain");
     Response->Code = EHttpServerResponseCodes::Ok;
     Result(MoveTemp(Response));
     return true;
 }
 
-bool FHTTPLinkModule::Focus(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
+bool FHTTPLinkModule::OnFocus(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
 {
     auto* World = GEditor->GetEditorWorldContext().World();
     if (!World) {
@@ -155,33 +241,16 @@ bool FHTTPLinkModule::Focus(const FHttpServerRequest& Request, const FHttpResult
     return Respond(Result);
 }
 
-
-TSharedRef<FExtender> FHTTPLinkModule::BuildContextMenu(const TSharedRef<FUICommandList> CommandList, const TArray<AActor*> Actors)
+bool FHTTPLinkModule::OnExec(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
 {
-    TSharedPtr<FExtender> Extender = MakeShareable(new FExtender());
-    auto Build = [=](FMenuBuilder& Builder) {
-        Builder.BeginSection("ist", LOCTEXT("ist", "ist"));
-        Builder.AddMenuEntry(
-            LOCTEXT("CopyLinkAddress", "リンクのアドレスをコピー"),
-            {},
-            FSlateIcon(FAppStyle::GetAppStyleSetName(), "Actors.Attach"),
-            FExecuteAction::CreateLambda([=]() { CopyLinkAddress(Actors); })
-        );
-        Builder.EndSection();
-    };
-    Extender->AddMenuExtension("ActorTypeTools", EExtensionHook::After, CommandList,
-        FMenuExtensionDelegate::CreateLambda(Build));
-    return Extender.ToSharedRef();
-}
-
-void FHTTPLinkModule::CopyLinkAddress(const TArray<AActor*> Actors)
-{
-    if (!Actors.IsEmpty()) {
-        auto Str = FString::Printf(TEXT("http://localhost:%d/focus?id=0x%08x"), PORT, Actors[0]->GetUniqueID());
-        FPlatformApplicationMisc::ClipboardCopy(*Str);
-        UE_LOG(LogTemp, Log, TEXT("FHTTPLinkModule::CopyLinkAddress(): %s"), *Str);
+    FString Command;
+    if (GetQueryParam(Request, "c", Command) || GetQueryParam(Request, "command", Command)) {
+        Outputs.Clear();
+        GUnrealEd->Exec(GetEditorWorld(), *Command, Outputs);
     }
+    return Respond(Result, Outputs.Log);
 }
+#pragma endregion HTTP Command
 
 #undef LOCTEXT_NAMESPACE
     
