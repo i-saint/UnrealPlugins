@@ -4,6 +4,7 @@
 #include "UnrealEdGlobals.h"
 #include "EngineUtils.h"
 #include "LevelEditor.h"
+#include "LevelEditorSubsystem.h"
 #include "HAL/PlatformApplicationMisc.h"
 #include "GenericPlatform/GenericPlatformApplicationMisc.h"
 
@@ -57,6 +58,10 @@ void FHTTPLinkModule::StartupModule()
 
         AddHandler("/focus", OnFocus);
         AddHandler("/exec", OnExec);
+
+        AddHandler("/level/new", OnNewLevel);
+        AddHandler("/level/load", OnLoadLevel);
+        AddHandler("/level/save", OnSaveLevel);
 
 #undef AddHandler
 
@@ -113,6 +118,15 @@ inline ActorType* FindActor(UWorld* World, Cond&& cond)
 
 template<class T>
 inline bool GetQueryParam(const FHttpServerRequest& Request, const char* Name, T& Dst);
+// bool
+template<>
+inline bool GetQueryParam(const FHttpServerRequest& Request, const char* Name, bool& Dst)
+{
+    if (auto* v = Request.QueryParams.Find(Name)) {
+        Dst = v->ToBool();
+    }
+    return false;
+}
 // int64
 template<>
 inline bool GetQueryParam(const FHttpServerRequest& Request, const char* Name, int64& Dst)
@@ -249,6 +263,65 @@ bool FHTTPLinkModule::OnExec(const FHttpServerRequest& Request, const FHttpResul
         GUnrealEd->Exec(GetEditorWorld(), *Command, Outputs);
     }
     return Respond(Result, Outputs.Log);
+}
+
+bool FHTTPLinkModule::OnNewLevel(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
+{
+    if (!GEditor) {
+        return Respond(Result);
+    }
+
+    bool R = false;
+    FString AssetPath, TemplatePath;
+    GetQueryParam(Request, "assetpath", AssetPath);
+    GetQueryParam(Request, "templatepath", TemplatePath);
+    if (!AssetPath.IsEmpty()) {
+        auto LevelEditorSubsystem = GEditor->GetEditorSubsystem<ULevelEditorSubsystem>();
+        if (!TemplatePath.IsEmpty()) {
+            R = LevelEditorSubsystem->NewLevelFromTemplate(AssetPath, TemplatePath);
+        }
+        else {
+            R = LevelEditorSubsystem->NewLevel(AssetPath);
+        }
+    }
+    return Respond(Result, FString::Printf(TEXT("%d"), (int)R));
+}
+
+bool FHTTPLinkModule::OnLoadLevel(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
+{
+    if (!GEditor) {
+        return Respond(Result);
+    }
+
+    bool R = false;
+    FString AssetPath;
+    GetQueryParam(Request, "assetpath", AssetPath);
+
+    if (!AssetPath.IsEmpty()) {
+        auto LevelEditorSubsystem = GEditor->GetEditorSubsystem<ULevelEditorSubsystem>();
+        R = LevelEditorSubsystem->LoadLevel(AssetPath);
+    }
+    return Respond(Result, FString::Printf(TEXT("%d"), (int)R));
+}
+
+bool FHTTPLinkModule::OnSaveLevel(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
+{
+    if (!GEditor) {
+        return Respond(Result);
+    }
+
+    bool R = false;
+    bool All = false;
+    GetQueryParam(Request, "all", All);
+
+    auto LevelEditorSubsystem = GEditor->GetEditorSubsystem<ULevelEditorSubsystem>();
+    if (All) {
+        R = LevelEditorSubsystem->SaveAllDirtyLevels();
+    }
+    else {
+        R = LevelEditorSubsystem->SaveCurrentLevel();
+    }
+    return Respond(Result, FString::Printf(TEXT("%d"), (int)R));
 }
 #pragma endregion HTTP Command
 

@@ -35,6 +35,9 @@ public:
     bool Respond(const FHttpResultCallback& Result, const FString& Content = {});
     bool OnFocus(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
     bool OnExec(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
+    bool OnNewLevel(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
+    bool OnLoadLevel(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
+    bool OnSaveLevel(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
 
     TSharedRef<FExtender> BuildContextMenu(const TSharedRef<FUICommandList> CommandList, const TArray<AActor*> Actors);
     void CopyLinkAddress(const TArray<AActor*> Actors);
