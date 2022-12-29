@@ -15,17 +15,17 @@
 #define LOCTEXT_NAMESPACE "FHTTPLinkModule"
 
 #pragma region FSimpleOutputDevice
-FSimpleOutputDevice::FSimpleOutputDevice()
+FHTTPLinkModule::FSimpleOutputDevice::FSimpleOutputDevice()
     : Super()
 {
 }
 
-void FSimpleOutputDevice::Serialize(const TCHAR* V, ELogVerbosity::Type Verbosity, const class FName& Category)
+void FHTTPLinkModule::FSimpleOutputDevice::Serialize(const TCHAR* V, ELogVerbosity::Type Verbosity, const class FName& Category)
 {
     Log += V;
 }
 
-void FSimpleOutputDevice::Clear()
+void FHTTPLinkModule::FSimpleOutputDevice::Clear()
 {
     Log.Empty();
 }

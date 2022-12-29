@@ -11,19 +11,21 @@
 #include "IHttpRouter.h"
 
 
-class HTTPLINK_API FSimpleOutputDevice : public FOutputDevice
-{
-using Super = FOutputDevice;
-public:
-    FSimpleOutputDevice();
-    void Serialize(const TCHAR* V, ELogVerbosity::Type Verbosity, const class FName& Category) override;
-    void Clear();
-
-    FString Log;
-};
-
 class HTTPLINK_API FHTTPLinkModule : public IModuleInterface
 {
+public:
+    class FSimpleOutputDevice : public FOutputDevice
+    {
+    using Super = FOutputDevice;
+    public:
+        FSimpleOutputDevice();
+        void Serialize(const TCHAR* V, ELogVerbosity::Type Verbosity, const class FName& Category) override;
+        void Clear();
+
+        FString Log;
+    };
+
+
 public:
     const int PORT = 8110;
 
