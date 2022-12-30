@@ -124,6 +124,44 @@ inline bool GetQueryParam(const FHttpServerRequest& Request, const char* Name, F
     return false;
 }
 
+// ちゃんと日本語を出力できる版 TJsonPrintPolicy<UTF8CHAR>
+template <>
+struct TJsonPrintPolicy<UTF8CHAR>
+{
+    using CharType = UTF8CHAR;
+
+    static inline void WriteChar(FArchive* Stream, CharType Char)
+    {
+        Stream->Serialize(&Char, sizeof(CharType));
+    }
+
+    static inline void WriteString(FArchive* Stream, const FString& String)
+    {
+        uint8 Buf[4];
+        for (TCHAR C : String) {
+            int N = UE::Core::Private::FTCHARToUTF8_Convert::Utf8FromCodepoint(C, Buf, 4);
+            Stream->Serialize(Buf, N);
+        }
+    }
+
+    static inline void WriteStringRaw(FArchive* Stream, const FString& String)
+    {
+        for (TCHAR C : String) {
+            WriteChar(Stream, static_cast<CharType>(C));
+        }
+    }
+
+    static inline void WriteFloat(FArchive* Stream, float Value)
+    {
+        WriteStringRaw(Stream, FString::Printf(TEXT("%g"), Value));
+    }
+
+    static inline void WriteDouble(FArchive* Stream, double Value)
+    {
+        WriteStringRaw(Stream, FString::Printf(TEXT("%.17g"), Value));
+    }
+};
+
 
 static void MakeEditorWindowForeground()
 {
@@ -169,7 +207,7 @@ static bool Serve(const FHttpResultCallback& Result, const FString& Content = ""
 
 static bool Serve(const FHttpResultCallback& Result, TArray<uint8>&& Content, const FString& ContentType)
 {
-    auto Response = FHttpServerResponse::Create(Content, ContentType);
+    auto Response = FHttpServerResponse::Create(MoveTemp(Content), ContentType);
     Response->Code = EHttpServerResponseCodes::Ok;
     AddAccessControl(*Response);
     Result(MoveTemp(Response));
@@ -178,15 +216,17 @@ static bool Serve(const FHttpResultCallback& Result, TArray<uint8>&& Content, co
 
 static bool ServeJson(const FHttpResultCallback& Result, TSharedPtr<FJsonObject> Json)
 {
-    FString Data;
-    FJsonSerializer::Serialize(Json.ToSharedRef(), TJsonWriterFactory<>::Create(&Data));
+    TArray<uint8> Data;
+    FMemoryWriter MemWriter(Data);
+    FJsonSerializer::Serialize(Json.ToSharedRef(), TJsonWriterFactory<UTF8CHAR>::Create(&MemWriter));
     return Serve(Result, MoveTemp(Data), "application/json");
 }
 
 static bool ServeJson(const FHttpResultCallback& Result, const TArray<TSharedPtr<FJsonValue>>& Json)
 {
-    FString Data;
-    FJsonSerializer::Serialize(Json, TJsonWriterFactory<>::Create(&Data));
+    TArray<uint8> Data;
+    FMemoryWriter MemWriter(Data);
+    FJsonSerializer::Serialize(Json, TJsonWriterFactory<UTF8CHAR>::Create(&MemWriter));
     return Serve(Result, MoveTemp(Data), "application/json");
 }
 
