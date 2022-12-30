@@ -15,6 +15,7 @@
 #include "ScopedTransaction.h"
 #include "Misc/FileHelper.h"
 #include "JsonObjectConverter.h"
+#include "Serialization/MemoryWriter.h"
 
 
 #if PLATFORM_WINDOWS
@@ -156,53 +157,37 @@ static void AddAccessControl(FHttpServerResponse& Response)
     Response.Headers.Add("Access-Control-Allow-Origin", { "*" });
 }
 
-static bool Respond(const FHttpResultCallback& Result, const FString& Content = {})
+static bool Serve(const FHttpResultCallback& Result, const FString& Content = "", const FString& ContentType = "text/plain")
 {
     // FHttpServerResponse::Ok() は 204 No Content を返すので使わない方がいい
-    auto Response = FHttpServerResponse::Create(Content, "text/plain");
+    auto Response = FHttpServerResponse::Create(Content, ContentType);
     Response->Code = EHttpServerResponseCodes::Ok;
     AddAccessControl(*Response);
     Result(MoveTemp(Response));
     return true;
 }
 
-static bool RespondJson(const FHttpResultCallback& Result, TSharedPtr<FJsonObject> Json)
+static bool Serve(const FHttpResultCallback& Result, TArray<uint8>&& Content, const FString& ContentType)
 {
-    FString Content;
-    {
-        auto Writer = TJsonWriterFactory<>::Create(&Content);
-        FJsonSerializer::Serialize(Json.ToSharedRef(), Writer);
-    }
-    auto Response = FHttpServerResponse::Create(Content, "application/json");
+    auto Response = FHttpServerResponse::Create(Content, ContentType);
     Response->Code = EHttpServerResponseCodes::Ok;
     AddAccessControl(*Response);
     Result(MoveTemp(Response));
     return true;
 }
 
-static bool RespondJson(const FHttpResultCallback& Result, const TArray<TSharedPtr<FJsonValue>>& Json)
+static bool ServeJson(const FHttpResultCallback& Result, TSharedPtr<FJsonObject> Json)
 {
-    FString Content;
-    {
-        auto Writer = TJsonWriterFactory<>::Create(&Content);
-        FJsonSerializer::Serialize(Json, Writer);
-    }
-    auto Response = FHttpServerResponse::Create(Content, "application/json");
-    Response->Code = EHttpServerResponseCodes::Ok;
-    AddAccessControl(*Response);
-    Result(MoveTemp(Response));
-    return true;
+    FString Data;
+    FJsonSerializer::Serialize(Json.ToSharedRef(), TJsonWriterFactory<>::Create(&Data));
+    return Serve(Result, MoveTemp(Data), "application/json");
 }
 
-static bool RespondRetry(const FHttpResultCallback& Result, FString Location, int Second)
+static bool ServeJson(const FHttpResultCallback& Result, const TArray<TSharedPtr<FJsonValue>>& Json)
 {
-    auto Response = FHttpServerResponse::Create(FString(), "text/plain");
-    Response->Code = EHttpServerResponseCodes::Redirect;
-    Response->Headers.Add("Location", { Location });
-    Response->Headers.Add("Retry-After", { FString::Printf(TEXT("%d"), Second)});
-    AddAccessControl(*Response);
-    Result(MoveTemp(Response));
-    return true;
+    FString Data;
+    FJsonSerializer::Serialize(Json, TJsonWriterFactory<>::Create(&Data));
+    return Serve(Result, MoveTemp(Data), "application/json");
 }
 
 static bool ServeFile(const FHttpResultCallback& Result, FString FilePath, FString ContentType)
@@ -212,6 +197,17 @@ static bool ServeFile(const FHttpResultCallback& Result, FString FilePath, FStri
 
     auto Response = FHttpServerResponse::Create(MoveTemp(Data), ContentType);
     Response->Code = Ok ? EHttpServerResponseCodes::Ok : EHttpServerResponseCodes::NotFound;
+    AddAccessControl(*Response);
+    Result(MoveTemp(Response));
+    return true;
+}
+
+static bool ServeRetry(const FHttpResultCallback& Result, FString Location, int Second)
+{
+    auto Response = FHttpServerResponse::Create("", "text/plain");
+    Response->Code = EHttpServerResponseCodes::Redirect;
+    Response->Headers.Add("Location", { Location });
+    Response->Headers.Add("Retry-After", { FString::Printf(TEXT("%d"), Second) });
     AddAccessControl(*Response);
     Result(MoveTemp(Response));
     return true;
@@ -441,7 +437,7 @@ bool FHTTPLinkModule::OnEditorExec(const FHttpServerRequest& Request, const FHtt
         Outputs.Clear();
         GUnrealEd->Exec(GetEditorWorld(), *Command, Outputs);
     }
-    return Respond(Result, Outputs.Log);
+    return Serve(Result, Outputs.Log);
 }
 
 bool FHTTPLinkModule::OnEditorScreenshot(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
@@ -453,7 +449,7 @@ bool FHTTPLinkModule::OnEditorScreenshot(const FHttpServerRequest& Request, cons
     auto Timestamp = FS.GetTimeStampLocal(*ScreenshotPath);
     if (Timestamp == FDateTime::MinValue()) {
         if (!FS.CreateDirectoryTree(*ScreenshotDir)) {
-            return Respond(Result);
+            return Serve(Result);
         }
     }
 
@@ -480,7 +476,7 @@ bool FHTTPLinkModule::OnEditorScreenshot(const FHttpServerRequest& Request, cons
         }
 
         // 撮影が完了していないので Retry-After を返してリトライしてもらう
-        return RespondRetry(Result, "/editor/screenshot", 2);
+        return ServeRetry(Result, "/editor/screenshot", 2);
     }
 }
 
@@ -498,7 +494,7 @@ bool FHTTPLinkModule::OnActorList(const FHttpServerRequest& Request, const FHttp
     EachActor(GetEditorWorld(), [&](AActor* Actor) {
         Json.Add(MakeShared<FJsonValueObject>(FActorSummary(Actor).ToJson()));
         });
-    return RespondJson(Result, Json);
+    return ServeJson(Result, Json);
 }
 
 static TFunction<AActor* ()> GetActorFinder(const FHttpServerRequest& Request)
@@ -543,7 +539,7 @@ bool FHTTPLinkModule::OnActorSelect(const FHttpServerRequest& Request, const FHt
             R = true;
         }
     }
-    return Respond(Result, FString::Printf(TEXT("%d"), (int)R));
+    return Serve(Result, FString::Printf(TEXT("%d"), (int)R));
 }
 
 bool FHTTPLinkModule::OnActorFocus(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
@@ -564,13 +560,13 @@ bool FHTTPLinkModule::OnActorFocus(const FHttpServerRequest& Request, const FHtt
             R = true;
         }
     }
-    return Respond(Result, FString::Printf(TEXT("%d"), (int)R));
+    return Serve(Result, FString::Printf(TEXT("%d"), (int)R));
 }
 
 bool FHTTPLinkModule::OnActorCreate(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
 {
     if (!GEditor) {
-        return Respond(Result);
+        return Serve(Result);
     }
 
     FString Label;
@@ -596,7 +592,7 @@ bool FHTTPLinkModule::OnActorCreate(const FHttpServerRequest& Request, const FHt
             }
         }
     }
-    return Respond(Result, Ret);
+    return Serve(Result, Ret);
 }
 
 bool FHTTPLinkModule::OnActorDelete(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
@@ -612,13 +608,13 @@ bool FHTTPLinkModule::OnActorDelete(const FHttpServerRequest& Request, const FHt
             R = true;
         }
     }
-    return Respond(Result, FString::Printf(TEXT("%d"), (int)R));
+    return Serve(Result, FString::Printf(TEXT("%d"), (int)R));
 }
 
 bool FHTTPLinkModule::OnActorMerge(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
 {
     // todo
-    return Respond(Result);
+    return Serve(Result);
 }
 #pragma endregion Actor Commands
 
@@ -627,7 +623,7 @@ bool FHTTPLinkModule::OnActorMerge(const FHttpServerRequest& Request, const FHtt
 bool FHTTPLinkModule::OnLevelNew(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
 {
     if (!GEditor) {
-        return Respond(Result);
+        return Serve(Result);
     }
 
     bool R = false;
@@ -643,13 +639,13 @@ bool FHTTPLinkModule::OnLevelNew(const FHttpServerRequest& Request, const FHttpR
             R = LevelEditorSubsystem->NewLevel(AssetPath);
         }
     }
-    return Respond(Result, FString::Printf(TEXT("%d"), (int)R));
+    return Serve(Result, FString::Printf(TEXT("%d"), (int)R));
 }
 
 bool FHTTPLinkModule::OnLevelLoad(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
 {
     if (!GEditor) {
-        return Respond(Result);
+        return Serve(Result);
     }
 
     bool R = false;
@@ -660,13 +656,13 @@ bool FHTTPLinkModule::OnLevelLoad(const FHttpServerRequest& Request, const FHttp
         auto LevelEditorSubsystem = GEditor->GetEditorSubsystem<ULevelEditorSubsystem>();
         R = LevelEditorSubsystem->LoadLevel(AssetPath);
     }
-    return Respond(Result, FString::Printf(TEXT("%d"), (int)R));
+    return Serve(Result, FString::Printf(TEXT("%d"), (int)R));
 }
 
 bool FHTTPLinkModule::OnLevelSave(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
 {
     if (!GEditor) {
-        return Respond(Result);
+        return Serve(Result);
     }
 
     bool R = false;
@@ -680,7 +676,7 @@ bool FHTTPLinkModule::OnLevelSave(const FHttpServerRequest& Request, const FHttp
     else {
         R = LevelEditorSubsystem->SaveCurrentLevel();
     }
-    return Respond(Result, FString::Printf(TEXT("%d"), (int)R));
+    return Serve(Result, FString::Printf(TEXT("%d"), (int)R));
 }
 #pragma endregion Level Commands
 
@@ -694,13 +690,13 @@ bool FHTTPLinkModule::OnAssetList(const FHttpServerRequest& Request, const FHttp
         Json.Add(MakeShared<FJsonValueObject>(FAssetSummary(Data).ToJson()));
         return true;
         });
-    return RespondJson(Result, Json);
+    return ServeJson(Result, Json);
 }
 
 bool FHTTPLinkModule::OnAssetImport(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
 {
     // todo
-    return Respond(Result);
+    return Serve(Result);
 }
 #pragma endregion Asset Commands
 
