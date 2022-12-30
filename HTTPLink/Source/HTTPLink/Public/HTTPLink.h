@@ -35,24 +35,25 @@ public:
     void CopyLinkAddress(const TArray<AActor*> Actors);
 
     // editor commands
-    bool OnExec(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
+    bool OnEditorExec(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
+    bool OnEditorScreenshot(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
 
     // actor commands
-    bool OnListActor(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
-    bool OnSelectActor(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
-    bool OnFocusActor(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
-    bool OnCreateActor(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
-    bool OnDeleteActor(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
-    bool OnMergeActor(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
+    bool OnActorList(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
+    bool OnActorSelect(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
+    bool OnActorFocus(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
+    bool OnActorCreate(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
+    bool OnActorDelete(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
+    bool OnActorMerge(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
 
     // level commands
-    bool OnNewLevel(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
-    bool OnLoadLevel(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
-    bool OnSaveLevel(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
+    bool OnLevelNew(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
+    bool OnLevelLoad(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
+    bool OnLevelSave(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
 
     // asset commands
-    bool OnListAsset(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
-    bool OnImportAsset(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
+    bool OnAssetList(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
+    bool OnAssetImport(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
 
 private:
     FSimpleOutputDevice Outputs;

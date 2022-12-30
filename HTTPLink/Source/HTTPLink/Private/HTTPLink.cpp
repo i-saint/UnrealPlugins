@@ -310,21 +310,22 @@ void FHTTPLinkModule::StartupModule()
         TMap<FString, FHttpRequestHandler> Handlers;
 #define AddHandler(Path, Func) Handlers.Add(Path, [this](auto& Request, auto& OnComplete) { return Func(Request, OnComplete); })
 
-        AddHandler("/exec", OnExec);
+        AddHandler("/editor/exec", OnEditorExec);
+        AddHandler("/editor/screenshot", OnEditorScreenshot);
 
-        AddHandler("/actor/list", OnListActor);
-        AddHandler("/actor/select", OnSelectActor);
-        AddHandler("/actor/focus", OnFocusActor);
-        AddHandler("/actor/create", OnCreateActor);
-        AddHandler("/actor/delete", OnDeleteActor);
-        AddHandler("/actor/merge", OnMergeActor);
+        AddHandler("/actor/list", OnActorList);
+        AddHandler("/actor/select", OnActorSelect);
+        AddHandler("/actor/focus", OnActorFocus);
+        AddHandler("/actor/create", OnActorCreate);
+        AddHandler("/actor/delete", OnActorDelete);
+        AddHandler("/actor/merge", OnActorMerge);
 
-        AddHandler("/level/new", OnNewLevel);
-        AddHandler("/level/load", OnLoadLevel);
-        AddHandler("/level/save", OnSaveLevel);
+        AddHandler("/level/new", OnLevelNew);
+        AddHandler("/level/load", OnLevelLoad);
+        AddHandler("/level/save", OnLevelSave);
 
-        AddHandler("/asset/list", OnListAsset);
-        AddHandler("/asset/import", OnImportAsset);
+        AddHandler("/asset/list", OnAssetList);
+        AddHandler("/asset/import", OnAssetImport);
 
 #undef AddHandler
 
@@ -390,7 +391,7 @@ void FHTTPLinkModule::CopyLinkAddress(const TArray<AActor*> Actors)
 
 
 #pragma region Editor Commands
-bool FHTTPLinkModule::OnExec(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
+bool FHTTPLinkModule::OnEditorExec(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
 {
     FString Command;
     if (GetQueryParam(Request, "c", Command) || GetQueryParam(Request, "command", Command)) {
@@ -399,11 +400,17 @@ bool FHTTPLinkModule::OnExec(const FHttpServerRequest& Request, const FHttpResul
     }
     return Respond(Result, Outputs.Log);
 }
+
+bool FHTTPLinkModule::OnEditorScreenshot(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
+{
+    // todo
+    return Respond(Result);
+}
 #pragma endregion Editor Commands
 
 
 #pragma region Actor Commands
-bool FHTTPLinkModule::OnListActor(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
+bool FHTTPLinkModule::OnActorList(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
 {
     TArray<TSharedPtr<FJsonValue>> Json;
     EachActor(GetEditorWorld(), [&](AActor* Actor) {
@@ -438,7 +445,7 @@ static TFunction<AActor* ()> GetActorFinder(const FHttpServerRequest& Request)
     return {};
 }
 
-bool FHTTPLinkModule::OnSelectActor(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
+bool FHTTPLinkModule::OnActorSelect(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
 {
     bool R = false;
     bool Additive = false;
@@ -457,7 +464,7 @@ bool FHTTPLinkModule::OnSelectActor(const FHttpServerRequest& Request, const FHt
     return Respond(Result, FString::Printf(TEXT("%d"), (int)R));
 }
 
-bool FHTTPLinkModule::OnFocusActor(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
+bool FHTTPLinkModule::OnActorFocus(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
 {
     bool R = false;
     TFunction<AActor* ()> Finder = GetActorFinder(Request);
@@ -478,7 +485,7 @@ bool FHTTPLinkModule::OnFocusActor(const FHttpServerRequest& Request, const FHtt
     return Respond(Result, FString::Printf(TEXT("%d"), (int)R));
 }
 
-bool FHTTPLinkModule::OnCreateActor(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
+bool FHTTPLinkModule::OnActorCreate(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
 {
     if (!GEditor) {
         return Respond(Result);
@@ -510,7 +517,7 @@ bool FHTTPLinkModule::OnCreateActor(const FHttpServerRequest& Request, const FHt
     return Respond(Result, Ret);
 }
 
-bool FHTTPLinkModule::OnDeleteActor(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
+bool FHTTPLinkModule::OnActorDelete(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
 {
     bool R = false;
     TFunction<AActor* ()> Finder = GetActorFinder(Request);
@@ -526,7 +533,7 @@ bool FHTTPLinkModule::OnDeleteActor(const FHttpServerRequest& Request, const FHt
     return Respond(Result, FString::Printf(TEXT("%d"), (int)R));
 }
 
-bool FHTTPLinkModule::OnMergeActor(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
+bool FHTTPLinkModule::OnActorMerge(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
 {
     // todo
     return Respond(Result);
@@ -535,7 +542,7 @@ bool FHTTPLinkModule::OnMergeActor(const FHttpServerRequest& Request, const FHtt
 
 
 #pragma region Level Commands
-bool FHTTPLinkModule::OnNewLevel(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
+bool FHTTPLinkModule::OnLevelNew(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
 {
     if (!GEditor) {
         return Respond(Result);
@@ -557,7 +564,7 @@ bool FHTTPLinkModule::OnNewLevel(const FHttpServerRequest& Request, const FHttpR
     return Respond(Result, FString::Printf(TEXT("%d"), (int)R));
 }
 
-bool FHTTPLinkModule::OnLoadLevel(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
+bool FHTTPLinkModule::OnLevelLoad(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
 {
     if (!GEditor) {
         return Respond(Result);
@@ -574,7 +581,7 @@ bool FHTTPLinkModule::OnLoadLevel(const FHttpServerRequest& Request, const FHttp
     return Respond(Result, FString::Printf(TEXT("%d"), (int)R));
 }
 
-bool FHTTPLinkModule::OnSaveLevel(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
+bool FHTTPLinkModule::OnLevelSave(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
 {
     if (!GEditor) {
         return Respond(Result);
@@ -597,7 +604,7 @@ bool FHTTPLinkModule::OnSaveLevel(const FHttpServerRequest& Request, const FHttp
 
 
 #pragma region Asset Commands
-bool FHTTPLinkModule::OnListAsset(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
+bool FHTTPLinkModule::OnAssetList(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
 {
     TArray<TSharedPtr<FJsonValue>> Json;
     auto& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
@@ -608,7 +615,7 @@ bool FHTTPLinkModule::OnListAsset(const FHttpServerRequest& Request, const FHttp
     return RespondJson(Result, Json);
 }
 
-bool FHTTPLinkModule::OnImportAsset(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
+bool FHTTPLinkModule::OnAssetImport(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
 {
     // todo
     return Respond(Result);
