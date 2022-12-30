@@ -3,6 +3,8 @@
 #include "CoreMinimal.h"
 #include "Modules/ModuleManager.h"
 #include "GenericPlatform/GenericPlatformProcess.h"
+#include "Async/Future.h"
+#include "Containers/Ticker.h"
 
 #include "HttpServerModule.h"
 #include "HttpRouteHandle.h"
@@ -11,7 +13,9 @@
 #include "IHttpRouter.h"
 
 
-class HTTPLINK_API FHTTPLinkModule : public IModuleInterface
+class HTTPLINK_API FHTTPLinkModule
+    : public IModuleInterface
+    , public FTSTickerObjectBase
 {
 public:
     class FSimpleOutputDevice : public FOutputDevice
@@ -30,13 +34,15 @@ public:
 
     virtual void StartupModule() override;
     virtual void ShutdownModule() override;
+    virtual bool Tick(float DeltaTime) override;
 
-    TSharedRef<FExtender> BuildContextMenu(const TSharedRef<FUICommandList> CommandList, const TArray<AActor*> Actors);
+    TSharedRef<FExtender> BuildActorContextMenu(const TSharedRef<FUICommandList> CommandList, const TArray<AActor*> Actors);
     void CopyLinkAddress(const TArray<AActor*> Actors);
 
     // editor commands
     bool OnEditorExec(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
     bool OnEditorScreenshot(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
+    void OnScreenshotProcessed();
 
     // actor commands
     bool OnActorList(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
@@ -56,8 +62,11 @@ public:
     bool OnAssetImport(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
 
 private:
-    FSimpleOutputDevice Outputs;
     FPlatformProcess::FSemaphore* GlobalLock = nullptr;
     TSharedPtr<IHttpRouter> Router;
     TArray<FHttpRouteHandle> HRoutes;
+    FSimpleOutputDevice Outputs;
+
+    FDelegateHandle HScreenshot;
+    bool bScreenshotInProgress = false;
 };

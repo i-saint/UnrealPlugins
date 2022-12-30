@@ -13,6 +13,7 @@
 #include "Misc/Guid.h"
 #include "AssetRegistry/AssetData.h"
 #include "ScopedTransaction.h"
+#include "Misc/FileHelper.h"
 #include "JsonObjectConverter.h"
 
 
@@ -150,11 +151,17 @@ static void MakeEditorWindowForeground()
     }
 }
 
+static void AddAccessControl(FHttpServerResponse& Response)
+{
+    Response.Headers.Add("Access-Control-Allow-Origin", { "*" });
+}
+
 static bool Respond(const FHttpResultCallback& Result, const FString& Content = {})
 {
     // FHttpServerResponse::Ok() は 204 No Content を返すので使わない方がいい
     auto Response = FHttpServerResponse::Create(Content, "text/plain");
     Response->Code = EHttpServerResponseCodes::Ok;
+    AddAccessControl(*Response);
     Result(MoveTemp(Response));
     return true;
 }
@@ -168,6 +175,7 @@ static bool RespondJson(const FHttpResultCallback& Result, TSharedPtr<FJsonObjec
     }
     auto Response = FHttpServerResponse::Create(Content, "application/json");
     Response->Code = EHttpServerResponseCodes::Ok;
+    AddAccessControl(*Response);
     Result(MoveTemp(Response));
     return true;
 }
@@ -181,9 +189,34 @@ static bool RespondJson(const FHttpResultCallback& Result, const TArray<TSharedP
     }
     auto Response = FHttpServerResponse::Create(Content, "application/json");
     Response->Code = EHttpServerResponseCodes::Ok;
+    AddAccessControl(*Response);
     Result(MoveTemp(Response));
     return true;
 }
+
+static bool RespondRetry(const FHttpResultCallback& Result, FString Location, int Second)
+{
+    auto Response = FHttpServerResponse::Create(FString(), "text/plain");
+    Response->Code = EHttpServerResponseCodes::Redirect;
+    Response->Headers.Add("Location", { Location });
+    Response->Headers.Add("Retry-After", { FString::Printf(TEXT("%d"), Second)});
+    AddAccessControl(*Response);
+    Result(MoveTemp(Response));
+    return true;
+}
+
+static bool ServeFile(const FHttpResultCallback& Result, FString FilePath, FString ContentType)
+{
+    TArray<uint8> Data;
+    bool Ok = FFileHelper::LoadFileToArray(Data, *FilePath);
+
+    auto Response = FHttpServerResponse::Create(MoveTemp(Data), ContentType);
+    Response->Code = Ok ? EHttpServerResponseCodes::Ok : EHttpServerResponseCodes::NotFound;
+    AddAccessControl(*Response);
+    Result(MoveTemp(Response));
+    return true;
+}
+
 
 template<class T>
 static bool MatchClass(const FAssetData& Asset)
@@ -340,11 +373,16 @@ void FHTTPLinkModule::StartupModule()
 
     // コンテキストメニュー登録
     auto& Extenders = FModuleManager::GetModuleChecked<FLevelEditorModule>(TEXT("LevelEditor")).GetAllLevelViewportContextMenuExtenders();
-    Extenders.Add(FLevelEditorModule::FLevelViewportMenuExtender_SelectedActors::CreateRaw(this, &FHTTPLinkModule::BuildContextMenu));
+    Extenders.Add(FLevelEditorModule::FLevelViewportMenuExtender_SelectedActors::CreateRaw(this, &FHTTPLinkModule::BuildActorContextMenu));
 }
 
 void FHTTPLinkModule::ShutdownModule()
 {
+    if (HScreenshot.IsValid()) {
+        FScreenshotRequest::OnScreenshotRequestProcessed().Remove(HScreenshot);
+        HScreenshot = {};
+    }
+
     // コンテキストメニュー登録解除のうまい方法がわからず…
     //auto& Extenders = FModuleManager::GetModuleChecked<FLevelEditorModule>(TEXT("LevelEditor")).GetAllLevelViewportContextMenuExtenders();
 
@@ -359,11 +397,16 @@ void FHTTPLinkModule::ShutdownModule()
         GlobalLock = nullptr;
     }
 }
+
+bool FHTTPLinkModule::Tick(float DeltaTime)
+{
+    return true;
+}
 #pragma endregion Startup / Shutdown
 
 
 #pragma region ContextMenu
-TSharedRef<FExtender> FHTTPLinkModule::BuildContextMenu(const TSharedRef<FUICommandList> CommandList, const TArray<AActor*> Actors)
+TSharedRef<FExtender> FHTTPLinkModule::BuildActorContextMenu(const TSharedRef<FUICommandList> CommandList, const TArray<AActor*> Actors)
 {
     TSharedPtr<FExtender> Extender = MakeShareable(new FExtender());
     auto Build = [=](FMenuBuilder& Builder) {
@@ -403,8 +446,47 @@ bool FHTTPLinkModule::OnEditorExec(const FHttpServerRequest& Request, const FHtt
 
 bool FHTTPLinkModule::OnEditorScreenshot(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
 {
-    // todo
-    return Respond(Result);
+    static const FString ScreenshotDir = FPaths::ProjectIntermediateDir();
+    static const FString ScreenshotPath = ScreenshotDir + TEXT("screenshot.png");
+
+    auto& FS = IPlatformFile::GetPlatformPhysical();
+    auto Timestamp = FS.GetTimeStampLocal(*ScreenshotPath);
+    if (Timestamp == FDateTime::MinValue()) {
+        if (!FS.CreateDirectoryTree(*ScreenshotDir)) {
+            return Respond(Result);
+        }
+    }
+
+    double TimeGap = (FDateTime::Now() - Timestamp).GetTotalSeconds();
+    if (TimeGap < 5.0) {
+        // 5 秒以内に撮影されたスクリーンショットならそれを返す
+        return ServeFile(Result, ScreenshotPath, "image/png");
+    }
+    else {
+        if (!bScreenshotInProgress) {
+            if (!HScreenshot.IsValid()) {
+                HScreenshot = FScreenshotRequest::OnScreenshotRequestProcessed().AddRaw(this, &FHTTPLinkModule::OnScreenshotProcessed);
+            }
+
+            bool ShowUI = true;
+            GetQueryParam(Request, "ui", ShowUI);
+            // 撮影リクエスト発行
+            FScreenshotRequest::RequestScreenshot(ScreenshotPath, ShowUI, false);
+            bScreenshotInProgress = true;
+
+            // エディタがアクティブなウィンドウでないと撮影処理が進まないっぽいので…
+            MakeEditorWindowForeground();
+            GEditor->RedrawLevelEditingViewports();
+        }
+
+        // 撮影が完了していないので Retry-After を返してリトライしてもらう
+        return RespondRetry(Result, "/editor/screenshot", 2);
+    }
+}
+
+void FHTTPLinkModule::OnScreenshotProcessed()
+{
+    bScreenshotInProgress = false;
 }
 #pragma endregion Editor Commands
 
