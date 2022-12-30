@@ -1,5 +1,6 @@
 ﻿#include "HTTPLink.h"
 #include "./InternalTypes.h"
+#include "./JsonUtils.h"
 
 #include "Editor/UnrealEdEngine.h"
 #include "UnrealEdGlobals.h"
@@ -14,7 +15,6 @@
 #include "AssetRegistry/AssetData.h"
 #include "ScopedTransaction.h"
 #include "Misc/FileHelper.h"
-#include "JsonObjectConverter.h"
 #include "Serialization/MemoryWriter.h"
 
 
@@ -124,43 +124,6 @@ inline bool GetQueryParam(const FHttpServerRequest& Request, const char* Name, F
     return false;
 }
 
-// ちゃんと日本語を出力できる版 TJsonPrintPolicy<UTF8CHAR>
-template <>
-struct TJsonPrintPolicy<UTF8CHAR>
-{
-    using CharType = UTF8CHAR;
-
-    static inline void WriteChar(FArchive* Stream, CharType Char)
-    {
-        Stream->Serialize(&Char, sizeof(CharType));
-    }
-
-    static inline void WriteString(FArchive* Stream, const FString& String)
-    {
-        uint8 Buf[4];
-        for (TCHAR C : String) {
-            int N = UE::Core::Private::FTCHARToUTF8_Convert::Utf8FromCodepoint(C, Buf, 4);
-            Stream->Serialize(Buf, N);
-        }
-    }
-
-    static inline void WriteStringRaw(FArchive* Stream, const FString& String)
-    {
-        for (TCHAR C : String) {
-            WriteChar(Stream, static_cast<CharType>(C));
-        }
-    }
-
-    static inline void WriteFloat(FArchive* Stream, float Value)
-    {
-        WriteStringRaw(Stream, FString::Printf(TEXT("%g"), Value));
-    }
-
-    static inline void WriteDouble(FArchive* Stream, double Value)
-    {
-        WriteStringRaw(Stream, FString::Printf(TEXT("%.17g"), Value));
-    }
-};
 
 
 static void MakeEditorWindowForeground()
@@ -214,20 +177,27 @@ static bool Serve(const FHttpResultCallback& Result, TArray<uint8>&& Content, co
     return true;
 }
 
-static bool ServeJson(const FHttpResultCallback& Result, TSharedPtr<FJsonObject> Json)
+static bool ServeJson(const FHttpResultCallback& Result, TSharedRef<FJsonObject> Json)
 {
     TArray<uint8> Data;
     FMemoryWriter MemWriter(Data);
-    FJsonSerializer::Serialize(Json.ToSharedRef(), TJsonWriterFactory<UTF8CHAR>::Create(&MemWriter));
+    FJsonSerializer::Serialize(Json, TJsonWriterFactory<UTF8CHAR>::Create(&MemWriter));
     return Serve(Result, MoveTemp(Data), "application/json");
 }
-
 static bool ServeJson(const FHttpResultCallback& Result, const TArray<TSharedPtr<FJsonValue>>& Json)
 {
     TArray<uint8> Data;
     FMemoryWriter MemWriter(Data);
     FJsonSerializer::Serialize(Json, TJsonWriterFactory<UTF8CHAR>::Create(&MemWriter));
     return Serve(Result, MoveTemp(Data), "application/json");
+}
+static bool ServeJson(const FHttpResultCallback& Result, std::initializer_list<JObject::Field>&& Fields)
+{
+    return ServeJson(Result, JObject(MoveTemp(Fields)));
+}
+static bool ServeJson(const FHttpResultCallback& Result, bool R)
+{
+    return ServeJson(Result, { {"result", R} });
 }
 
 static bool ServeFile(const FHttpResultCallback& Result, FString FilePath, FString ContentType)
@@ -477,7 +447,7 @@ bool FHTTPLinkModule::OnEditorExec(const FHttpServerRequest& Request, const FHtt
         Outputs.Clear();
         GUnrealEd->Exec(GetEditorWorld(), *Command, Outputs);
     }
-    return Serve(Result, Outputs.Log);
+    return ServeJson(Result, { {"outputs", Outputs.Log} });
 }
 
 bool FHTTPLinkModule::OnEditorScreenshot(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
@@ -579,7 +549,7 @@ bool FHTTPLinkModule::OnActorSelect(const FHttpServerRequest& Request, const FHt
             R = true;
         }
     }
-    return Serve(Result, FString::Printf(TEXT("%d"), (int)R));
+    return ServeJson(Result, R);
 }
 
 bool FHTTPLinkModule::OnActorFocus(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
@@ -600,7 +570,7 @@ bool FHTTPLinkModule::OnActorFocus(const FHttpServerRequest& Request, const FHtt
             R = true;
         }
     }
-    return Serve(Result, FString::Printf(TEXT("%d"), (int)R));
+    return ServeJson(Result, R);
 }
 
 bool FHTTPLinkModule::OnActorCreate(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
@@ -616,23 +586,28 @@ bool FHTTPLinkModule::OnActorCreate(const FHttpServerRequest& Request, const FHt
     GetQueryParam(Request, "location", Location);
     GetQueryParam(Request, "assetpath", AssetPath);
 
-    FString Ret;
+    AActor* Actor = nullptr;
     if (!AssetPath.IsEmpty()) {
         auto& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
         FAssetData AssetData = AssetRegistryModule.Get().GetAssetByObjectPath(AssetPath);
         if (AssetData.IsValid()) {
             auto UndoScope = FScopedTransaction(LOCTEXT("OnCreateActor", "OnCreateActor"));
             auto* EditorActorSubsystem = GEditor->GetEditorSubsystem<UEditorActorSubsystem>();
-            AActor* Actor = EditorActorSubsystem->SpawnActorFromObject(AssetData.GetAsset(), Location);
+            Actor = EditorActorSubsystem->SpawnActorFromObject(AssetData.GetAsset(), Location);
             if (Actor) {
                 if (!Label.IsEmpty()) {
                     Actor->SetActorLabel(Label);
                 }
-                Ret = Actor->GetActorGuid().ToString();
             }
         }
     }
-    return Serve(Result, Ret);
+
+    JObject JO;
+    JO["result"] = Actor ? true : false;
+    if (Actor) {
+        JO["actor"] = FActorSummary(Actor).ToJson();
+    }
+    return ServeJson(Result, JO);
 }
 
 bool FHTTPLinkModule::OnActorDelete(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
@@ -648,7 +623,7 @@ bool FHTTPLinkModule::OnActorDelete(const FHttpServerRequest& Request, const FHt
             R = true;
         }
     }
-    return Serve(Result, FString::Printf(TEXT("%d"), (int)R));
+    return ServeJson(Result, R);
 }
 
 bool FHTTPLinkModule::OnActorMerge(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
@@ -679,7 +654,7 @@ bool FHTTPLinkModule::OnLevelNew(const FHttpServerRequest& Request, const FHttpR
             R = LevelEditorSubsystem->NewLevel(AssetPath);
         }
     }
-    return Serve(Result, FString::Printf(TEXT("%d"), (int)R));
+    return ServeJson(Result, R);
 }
 
 bool FHTTPLinkModule::OnLevelLoad(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
@@ -696,7 +671,7 @@ bool FHTTPLinkModule::OnLevelLoad(const FHttpServerRequest& Request, const FHttp
         auto LevelEditorSubsystem = GEditor->GetEditorSubsystem<ULevelEditorSubsystem>();
         R = LevelEditorSubsystem->LoadLevel(AssetPath);
     }
-    return Serve(Result, FString::Printf(TEXT("%d"), (int)R));
+    return ServeJson(Result, R);
 }
 
 bool FHTTPLinkModule::OnLevelSave(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
@@ -716,7 +691,7 @@ bool FHTTPLinkModule::OnLevelSave(const FHttpServerRequest& Request, const FHttp
     else {
         R = LevelEditorSubsystem->SaveCurrentLevel();
     }
-    return Serve(Result, FString::Printf(TEXT("%d"), (int)R));
+    return ServeJson(Result, R);
 }
 #pragma endregion Level Commands
 
