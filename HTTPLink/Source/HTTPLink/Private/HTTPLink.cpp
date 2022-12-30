@@ -512,8 +512,18 @@ bool FHTTPLinkModule::OnCreateActor(const FHttpServerRequest& Request, const FHt
 
 bool FHTTPLinkModule::OnDeleteActor(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
 {
-    // todo
-    return Respond(Result);
+    bool R = false;
+    TFunction<AActor* ()> Finder = GetActorFinder(Request);
+
+    if (Finder) {
+        if (AActor* Actor = Finder()) {
+            auto UndoScope = FScopedTransaction(LOCTEXT("OnDeleteActor", "OnDeleteActor"));
+            Actor->Modify();
+            Actor->Destroy();
+            R = true;
+        }
+    }
+    return Respond(Result, FString::Printf(TEXT("%d"), (int)R));
 }
 
 bool FHTTPLinkModule::OnMergeActor(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
