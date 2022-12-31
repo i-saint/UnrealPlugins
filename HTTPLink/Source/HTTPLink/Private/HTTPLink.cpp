@@ -749,11 +749,13 @@ bool FHTTPLinkModule::OnTest(const FHttpServerRequest& Request, const FHttpResul
             Json.Set("intArrayMap", Tmp);
         }
         Json.Set({
-            {"field1", "ANSICHAR*" },
-            {"field2", TEXT("TCHAR*") },
-            {"field3", {true, false, true} },
-            {"field4", {"abc", "def", "ghi"} },
-            {"field5", {FVector(0,1,2), FVector(3,4,5)}},
+            {"ansicharField", "ANSICHAR*" },
+            {"tcharField", TEXT("TCHAR*") },
+            {"boolArrayField", {true, false, true} },
+            {"stringArrayField", {"abc", "def", "ghi"} },
+            {"vectorArrayField", {FVector(0,1,2), FVector(3,4,5)}},
+            {"guidField", FGuid::NewGuid()},
+            {"dateTimeField", FDateTime::Now()},
             });
         return ServeJson(Result, MoveTemp(Json));
     }

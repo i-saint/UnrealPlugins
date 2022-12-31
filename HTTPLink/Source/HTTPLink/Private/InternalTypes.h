@@ -28,7 +28,7 @@ struct FActorSummary
 
     UPROPERTY()
     FString Label;
-    
+
     UPROPERTY()
     FName Name;
 

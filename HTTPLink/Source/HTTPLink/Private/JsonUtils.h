@@ -132,7 +132,7 @@ public:
     };
 
     template <typename T, typename = void>
-    struct IsStruct
+    struct IsObject
     {
         static constexpr bool Value = HasToJObject<T>::Value || HasStaticStruct<T>::Value || IsNoExportType<T>::Value;
     };
@@ -143,7 +143,7 @@ public:
     template <typename T> struct IsArrayElement
     {
         static constexpr bool Value = IsScalar<T>::Value || IsArray<T>::Value || IsMap<T>::Value ||
-            IsStruct<T>::Value || HasToJObject<T>::Value || HasToJArray<T>::Value;
+            IsObject<T>::Value || HasToJObject<T>::Value || HasToJArray<T>::Value;
     };
 
     template <typename T> struct IsArray { static constexpr bool Value = HasToJArray<T>::Value; };
@@ -215,7 +215,7 @@ public:
     }
 
     // struct
-    template<class T, std::enable_if_t<IsStruct<T>::Value>* = nullptr>
+    template<class T, std::enable_if_t<IsObject<T>::Value>* = nullptr>
     static inline TSharedPtr<FJsonValue> ToValue(const T& Value)
     {
         if constexpr (HasToJObject<T>::Value) {
@@ -226,9 +226,17 @@ public:
         }
         else if constexpr (IsNoExportType<T>::Value) {
             auto Struct = NoExportType<T>::StaticStruct();
-            auto Json = MakeShared<FJsonObject>();
-            if (FJsonObjectConverter::UStructToJsonObject(Struct, &Value, Json)) {
-                return MakeShared<FJsonValueObject>(Json);
+            auto* Ops = Struct->GetCppStructOps();
+            if (Ops && Ops->HasExportTextItem()) {
+                FString StrValue;
+                Ops->ExportTextItem(StrValue, &Value, nullptr, nullptr, PPF_None, nullptr);
+                return MakeShared<FJsonValueString>(StrValue);
+            }
+            else {
+                auto Json = MakeShared<FJsonObject>();
+                if (FJsonObjectConverter::UStructToJsonObject(Struct, &Value, Json)) {
+                    return MakeShared<FJsonValueObject>(Json);
+                }
             }
             // should not be here
             check(false);
@@ -383,8 +391,8 @@ public:
 DEF_NOEXPORTTYPE(COREUOBJECT_API, FVector);
 DEF_NOEXPORTTYPE(COREUOBJECT_API, FQuat);
 DEF_NOEXPORTTYPE(COREUOBJECT_API, FTransform);
-//DEF_NOEXPORTTYPE(COREUOBJECT_API, FDateTime);
-//DEF_NOEXPORTTYPE(COREUOBJECT_API, FGuid);
+DEF_NOEXPORTTYPE(COREUOBJECT_API, FDateTime);
+DEF_NOEXPORTTYPE(COREUOBJECT_API, FGuid);
 // 適宜追加
 
 
