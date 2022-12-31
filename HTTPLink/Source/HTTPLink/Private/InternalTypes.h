@@ -44,7 +44,6 @@ struct FActorSummary
 
     FActorSummary(AActor* Actor = nullptr);
     void Setup(AActor* Actor);
-    TSharedPtr<FJsonObject> ToJson() const;
 };
 
 
@@ -69,6 +68,5 @@ struct FAssetSummary
     FAssetSummary();
     FAssetSummary(const FAssetData& Data);
     void Setup(const FAssetData& Data);
-    TSharedPtr<FJsonObject> ToJson() const;
 };
 

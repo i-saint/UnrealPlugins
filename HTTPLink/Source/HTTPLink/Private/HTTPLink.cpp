@@ -190,23 +190,25 @@ static bool Serve(const FHttpResultCallback& Result, TArray<uint8>&& Content, co
     return true;
 }
 
-static bool ServeJson(const FHttpResultCallback& Result, TSharedRef<FJsonObject> Json)
+template<class T>
+static bool ServeJsonImpl(const FHttpResultCallback& Result, T&& Json)
 {
     TArray<uint8> Data;
     FMemoryWriter MemWriter(Data);
     FJsonSerializer::Serialize(Json, TJsonWriterFactory<UTF8CHAR>::Create(&MemWriter));
     return Serve(Result, MoveTemp(Data), "application/json");
 }
-static bool ServeJson(const FHttpResultCallback& Result, const TArray<TSharedPtr<FJsonValue>>& Json)
+static bool ServeJson(const FHttpResultCallback& Result, JObject&& Json)
 {
-    TArray<uint8> Data;
-    FMemoryWriter MemWriter(Data);
-    FJsonSerializer::Serialize(Json, TJsonWriterFactory<UTF8CHAR>::Create(&MemWriter));
-    return Serve(Result, MoveTemp(Data), "application/json");
+    return ServeJsonImpl(Result, MoveTemp(Json));
+}
+static bool ServeJson(const FHttpResultCallback& Result, JArray&& Json)
+{
+    return ServeJsonImpl(Result, MoveTemp(Json));
 }
 static bool ServeJson(const FHttpResultCallback& Result, std::initializer_list<JObject::Field>&& Fields)
 {
-    return ServeJson(Result, JObject(MoveTemp(Fields)));
+    return ServeJsonImpl(Result, JObject(MoveTemp(Fields)));
 }
 static bool ServeJson(const FHttpResultCallback& Result, bool R)
 {
@@ -292,11 +294,6 @@ void FActorSummary::Setup(AActor* Actor)
     }
 }
 
-TSharedPtr<FJsonObject> FActorSummary::ToJson() const
-{
-    return FJsonObjectConverter::UStructToJsonObject(*this);
-}
-
 
 FAssetSummary::FAssetSummary()
 {
@@ -313,11 +310,6 @@ void FAssetSummary::Setup(const FAssetData& Data)
     AssetName = Data.AssetName;
     ObjectPath = GetObectPathStr(Data);
     PackageName = Data.PackageName;
-}
-
-TSharedPtr<FJsonObject> FAssetSummary::ToJson() const
-{
-    return FJsonObjectConverter::UStructToJsonObject(*this);
 }
 
 
@@ -515,11 +507,11 @@ void FHTTPLinkModule::OnScreenshotProcessed()
 #pragma region Actor Commands
 bool FHTTPLinkModule::OnActorList(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
 {
-    TArray<TSharedPtr<FJsonValue>> Json;
+    JArray Json;
     EachActor(GetEditorWorld(), [&](AActor* Actor) {
-        Json.Add(MakeShared<FJsonValueObject>(FActorSummary(Actor).ToJson()));
+        Json.Add(FActorSummary(Actor));
         });
-    return ServeJson(Result, Json);
+    return ServeJson(Result, MoveTemp(Json));
 }
 
 static TFunction<AActor* ()> GetActorFinder(const FHttpServerRequest& Request)
@@ -617,12 +609,12 @@ bool FHTTPLinkModule::OnActorCreate(const FHttpServerRequest& Request, const FHt
         }
     }
 
-    JObject JO;
-    JO["result"] = Actor ? true : false;
+    JObject Json;
+    Json["result"] = Actor ? true : false;
     if (Actor) {
-        JO["actor"] = FActorSummary(Actor).ToJson();
+        Json["actor"] = FActorSummary(Actor);
     }
-    return ServeJson(Result, JO);
+    return ServeJson(Result, MoveTemp(Json));
 }
 
 bool FHTTPLinkModule::OnActorDelete(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
@@ -714,13 +706,13 @@ bool FHTTPLinkModule::OnLevelSave(const FHttpServerRequest& Request, const FHttp
 #pragma region Asset Commands
 bool FHTTPLinkModule::OnAssetList(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
 {
-    TArray<TSharedPtr<FJsonValue>> Json;
+    JArray Json;
     auto& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
     AssetRegistryModule.Get().EnumerateAllAssets([&](const FAssetData& Data) {
-        Json.Add(MakeShared<FJsonValueObject>(FAssetSummary(Data).ToJson()));
+        Json.Add(FAssetSummary(Data));
         return true;
         });
-    return ServeJson(Result, Json);
+    return ServeJson(Result, MoveTemp(Json));
 }
 
 bool FHTTPLinkModule::OnAssetImport(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
@@ -737,35 +729,38 @@ bool FHTTPLinkModule::OnTest(const FHttpServerRequest& Request, const FHttpResul
     FString Case;
     GetQueryParam(Request, "case", Case);
     if (Case == "json") {
-        JObject JO;
+        JObject Json;
         {
             TMap<FString, FString> Tmp;
             Tmp.Add("Key", "Value");
             Tmp.Add(TEXT("日本語Key"), TEXT("日本語Value"));
-            JO.Set("stringMap", Tmp);
+            Json.Set("stringMap", Tmp);
         }
         {
             TMap<FString, int> Tmp;
             Tmp.Add("Key", 1);
             Tmp.Add(TEXT("日本語Key"), 2);
-            JO.Set("intMap", Tmp);
+            Json.Set("intMap", Tmp);
         }
         {
             TMap<FString, TArray<int>> Tmp;
             Tmp.Add("Key", { 0,1,2 });
             Tmp.Add(TEXT("日本語Key"), { 3,4,5 });
-            JO.Set("intArrayMap", Tmp);
+            Json.Set("intArrayMap", Tmp);
         }
-        JO.Set({
+        Json.Set({
             {"field1", "ANSICHAR*" },
             {"field2", TEXT("TCHAR*") },
             {"field3", {true, false, true} },
-            {"field3", {"abc", "def", "ghi"} },
+            {"field4", {"abc", "def", "ghi"} },
+            {"field5", {FVector(0,1,2), FVector(3,4,5)}},
             });
-        return ServeJson(Result, JO);
+        return ServeJson(Result, MoveTemp(Json));
     }
     else {
-
+        auto SS = FActorSummary::StaticStruct();
+        auto Path = SS->GetStructPathName();
+        UE_LOG(LogTemp, Log, TEXT("%s"), *Path.ToString());
     }
 
     return ServeJson(Result, false);
