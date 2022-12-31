@@ -67,6 +67,19 @@ inline bool GetQueryParam(const FHttpServerRequest& Request, const char* Name, b
     }
     return false;
 }
+// int32
+template<>
+inline bool GetQueryParam(const FHttpServerRequest& Request, const char* Name, int& Dst)
+{
+    if (auto* V = Request.QueryParams.Find(Name)) {
+        if (V->StartsWith("0x"))
+            Dst = FParse::HexNumber(**V);
+        else
+            Dst = FCString::Atoi(**V);
+        return true;
+    }
+    return false;
+}
 // int64
 template<>
 inline bool GetQueryParam(const FHttpServerRequest& Request, const char* Name, int64& Dst)
@@ -365,6 +378,8 @@ void FHTTPLinkModule::StartupModule()
 
         AddHandler("/asset/list", OnAssetList);
         AddHandler("/asset/import", OnAssetImport);
+
+        AddHandler("/test", OnTest);
 
 #undef AddHandler
 
@@ -714,6 +729,48 @@ bool FHTTPLinkModule::OnAssetImport(const FHttpServerRequest& Request, const FHt
     return Serve(Result);
 }
 #pragma endregion Asset Commands
+
+
+#pragma region Test Commands
+bool FHTTPLinkModule::OnTest(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
+{
+    FString Case;
+    GetQueryParam(Request, "case", Case);
+    if (Case == "json") {
+        JObject JO;
+        {
+            TMap<FString, FString> Tmp;
+            Tmp.Add("Key", "Value");
+            Tmp.Add(TEXT("日本語Key"), TEXT("日本語Value"));
+            JO.Set("stringMap", Tmp);
+        }
+        {
+            TMap<FString, int> Tmp;
+            Tmp.Add("Key", 1);
+            Tmp.Add(TEXT("日本語Key"), 2);
+            JO.Set("intMap", Tmp);
+        }
+        {
+            TMap<FString, TArray<int>> Tmp;
+            Tmp.Add("Key", { 0,1,2 });
+            Tmp.Add(TEXT("日本語Key"), { 3,4,5 });
+            JO.Set("intArrayMap", Tmp);
+        }
+        JO.Set({
+            {"field1", "ANSICHAR*" },
+            {"field2", TEXT("TCHAR*") },
+            {"field3", {true, false, true} },
+            {"field3", {"abc", "def", "ghi"} },
+            });
+        return ServeJson(Result, JO);
+    }
+    else {
+
+    }
+
+    return ServeJson(Result, false);
+}
+#pragma endregion Test Commands
 
 
 #undef LOCTEXT_NAMESPACE

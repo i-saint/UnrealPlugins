@@ -61,6 +61,9 @@ public:
     bool OnAssetList(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
     bool OnAssetImport(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
 
+    // test commands
+    bool OnTest(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
+
 private:
     FPlatformProcess::FSemaphore* GlobalLock = nullptr;
     TSharedPtr<IHttpRouter> Router;
