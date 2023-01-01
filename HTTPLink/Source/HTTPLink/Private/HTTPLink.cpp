@@ -734,19 +734,19 @@ bool FHTTPLinkModule::OnTest(const FHttpServerRequest& Request, const FHttpResul
             TMap<FString, FString> Tmp;
             Tmp.Add("Key", "Value");
             Tmp.Add(TEXT("日本語Key"), TEXT("日本語Value"));
-            Json.Set("stringMap", Tmp);
+            Json.Set("stringStringMap", Tmp);
         }
         {
-            TMap<FString, int> Tmp;
+            TMap<FName, int> Tmp;
             Tmp.Add("Key", 1);
             Tmp.Add(TEXT("日本語Key"), 2);
-            Json.Set("intMap", Tmp);
+            Json.Set("nameIntMap", Tmp);
         }
         {
-            TMap<FString, TArray<int>> Tmp;
-            Tmp.Add("Key", { 0,1,2 });
-            Tmp.Add(TEXT("日本語Key"), { 3,4,5 });
-            Json.Set("intArrayMap", Tmp);
+            TMap<FGuid, TArray<int>> Tmp;
+            Tmp.Add(FGuid::NewGuid(), { 0,1,2 });
+            Tmp.Add(FGuid::NewGuid(), { 3,4,5 });
+            Json.Set("guidIntArrayMap", Tmp);
         }
         Json.Set({
             {"ansicharField", "ANSICHAR*"},
@@ -760,7 +760,7 @@ bool FHTTPLinkModule::OnTest(const FHttpServerRequest& Request, const FHttpResul
             });
 
         JArray Jarray;
-        Jarray.Add("str", true, 100, FVector(0, 1, 2), FGuid::NewGuid(), FName("FName"));
+        Jarray.Add("str", true, 100, FVector(0, 1, 2), FGuid::NewGuid(), FName("FName"), std::string("std::string"));
         Json.Set("testJArray", Jarray.ToValue());
         return ServeJson(Result, MoveTemp(Json));
     }
