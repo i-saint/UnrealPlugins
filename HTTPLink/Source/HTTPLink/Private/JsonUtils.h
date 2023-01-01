@@ -1,5 +1,8 @@
 ﻿#pragma once
 
+#include "UObject/NoExportTypes.h"
+#include "UObject/TemplateString.h"
+
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "Serialization/JsonReader.h"
@@ -50,7 +53,7 @@ struct TJsonPrintPolicy<UTF8CHAR>
 
 template<class T> struct ToJObject {};
 template<class T> struct ToJArray {};
-template<class T> struct NoExportType {};
+template<class T> struct NoExportStruct {};
 
 class JObjectBase
 {
@@ -99,12 +102,12 @@ public:
     };
 
     template <typename T, typename = void>
-    struct IsNoExportType
+    struct IsNoExportStruct
     {
         static constexpr bool Value = false;
     };
     template <typename T>
-    struct IsNoExportType<T, std::void_t<decltype(NoExportType<T>::StaticStruct())>>
+    struct IsNoExportStruct<T, std::void_t<decltype(NoExportStruct<T>::StaticStruct())>>
     {
         static constexpr bool Value = true;
     };
@@ -134,7 +137,7 @@ public:
     template <typename T, typename = void>
     struct IsObject
     {
-        static constexpr bool Value = HasToJObject<T>::Value || HasStaticStruct<T>::Value || IsNoExportType<T>::Value;
+        static constexpr bool Value = HasToJObject<T>::Value || HasStaticStruct<T>::Value || IsNoExportStruct<T>::Value;
     };
 
     template <typename T> struct IsArray;
@@ -225,8 +228,8 @@ private:
         else if constexpr (HasStaticStruct<T>::Value) {
             return MakeShared<FJsonValueObject>(FJsonObjectConverter::UStructToJsonObject(Value));
         }
-        else if constexpr (IsNoExportType<T>::Value) {
-            auto Struct = NoExportType<T>::StaticStruct();
+        else if constexpr (IsNoExportStruct<T>::Value) {
+            auto Struct = NoExportStruct<T>::StaticStruct();
             auto* Ops = Struct->GetCppStructOps();
             if (Ops && Ops->HasExportTextItem()) {
                 FString StrValue;
@@ -400,9 +403,10 @@ public:
 };
 
 
+#define DEF_ENUM(T)
 
-#define DEF_NOEXPORTTYPE(T)\
-    template<> struct NoExportType<T>\
+#define DEF_STRUCT(T)\
+    template<> struct NoExportStruct<T>\
     {\
         static UScriptStruct* StaticStruct() {\
             extern DLLIMPORT UScriptStruct* Z_Construct_UScriptStruct_##T();\
@@ -410,13 +414,13 @@ public:
         }\
     }
 
-DEF_NOEXPORTTYPE(FVector);
-DEF_NOEXPORTTYPE(FQuat);
-DEF_NOEXPORTTYPE(FTransform);
-DEF_NOEXPORTTYPE(FDateTime);
-DEF_NOEXPORTTYPE(FGuid);
-// 適宜追加
+#define DEF_CLASS(T)
 
+#include "./NoExportTypes.def.h"
+
+#undef DEF_ENUM
+#undef DEF_STRUCT
+#undef DEF_CLASS
 
 //// ToJObject 使用例
 //
