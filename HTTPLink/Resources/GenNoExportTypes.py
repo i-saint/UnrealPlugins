@@ -21,8 +21,7 @@ def findUproject():
 def getUEInstallDir(ueVersion):
     try:
         regPath = r'SOFTWARE\EpicGames\Unreal Engine\\' + ueVersion
-        hklm = winreg.HKEY_LOCAL_MACHINE
-        regKey = winreg.OpenKey(hklm, regPath, 0, winreg.KEY_READ)
+        regKey = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, regPath, 0, winreg.KEY_READ)
         ueDir = winreg.QueryValueEx(regKey, r'InstalledDirectory')[0]
         regKey.Close()
     except WindowsError:
@@ -69,7 +68,7 @@ for m in patternStruct.finditer(inFile):
     ok = True
     for e in excludePatterns:
         if e.search(m.group(1)):
-            print(m.group(1))
+            print(f'excluded: {m.group(1)}')
             ok = False
             break
     if ok:

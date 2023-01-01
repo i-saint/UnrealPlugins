@@ -760,7 +760,7 @@ bool FHTTPLinkModule::OnTest(const FHttpServerRequest& Request, const FHttpResul
             });
 
         JArray Jarray;
-        Jarray.Add("str", true, 100, FVector(0, 1, 2), FGuid::NewGuid());
+        Jarray.Add("str", true, 100, FVector(0, 1, 2), FGuid::NewGuid(), FName("FName"));
         Json.Set("testJArray", Jarray.ToValue());
         return ServeJson(Result, MoveTemp(Json));
     }

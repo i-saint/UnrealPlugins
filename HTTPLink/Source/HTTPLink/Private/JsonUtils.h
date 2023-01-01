@@ -91,28 +91,6 @@ public:
     };
 
     template <typename T, typename = void>
-    struct HasStaticStruct
-    {
-        static constexpr bool Value = false;
-    };
-    template <typename T>
-    struct HasStaticStruct<T, std::void_t<decltype(T::StaticStruct())>>
-    {
-        static constexpr bool Value = true;
-    };
-
-    template <typename T, typename = void>
-    struct IsNoExportStruct
-    {
-        static constexpr bool Value = false;
-    };
-    template <typename T>
-    struct IsNoExportStruct<T, std::void_t<decltype(NoExportStruct<T>::StaticStruct())>>
-    {
-        static constexpr bool Value = true;
-    };
-
-    template <typename T, typename = void>
     struct HasToJObject
     {
         static constexpr bool Value = false;
@@ -135,116 +113,146 @@ public:
     };
 
     template <typename T, typename = void>
-    struct IsObject
+    struct IsIteratable
     {
-        static constexpr bool Value = HasToJObject<T>::Value || HasStaticStruct<T>::Value || IsNoExportStruct<T>::Value;
+        static constexpr bool Value = false;
+    };
+    template <typename T>
+    struct IsIteratable<T, std::void_t<decltype(std::begin(std::declval<T&>()), std::end(std::declval<T&>()))>>
+    {
+        static constexpr bool Value = true;
     };
 
-    template <typename T> struct IsArray;
-    template <typename T> struct IsMap;
-
-    template <typename T> struct IsArrayElement
+    template <typename T, typename = void>
+    struct IsStringKVP
     {
-        static constexpr bool Value = IsScalar<T>::Value || IsArray<T>::Value || IsMap<T>::Value ||
-            IsObject<T>::Value || HasToJObject<T>::Value || HasToJArray<T>::Value;
+        static constexpr bool Value = false;
+    };
+    template <typename T>
+    struct IsStringKVP<T, std::void_t<typename T::KeyType>>
+    {
+        static constexpr bool Value = std::is_same_v<typename T::KeyType, FString>;
     };
 
-    template <typename T> struct IsArray { static constexpr bool Value = HasToJArray<T>::Value; };
-    template <typename T> struct IsArray<TArray<T>> { static constexpr bool Value = IsArrayElement<T>::Value; };
-    template <typename T> struct IsArray<TArrayView<T>> { static constexpr bool Value = IsArrayElement<T>::Value; };
-    template <typename T, size_t N> struct IsArray<T[N]> { static constexpr bool Value = IsArrayElement<T>::Value; };
-    template <typename T, size_t N> struct IsArray<TStaticArray<T, N>> { static constexpr bool Value = IsArrayElement<T>::Value; };
-    template <typename T> struct IsArray<std::initializer_list<T>> { static constexpr bool Value = IsArrayElement<T>::Value; };
+    template <typename T, typename = void>
+    struct HasStaticStruct
+    {
+        static constexpr bool Value = false;
+    };
+    template <typename T>
+    struct HasStaticStruct<T, std::void_t<decltype(T::StaticStruct())>>
+    {
+        static constexpr bool Value = true;
+    };
+    template <typename T, typename = void>
+    struct IsNoExportStruct
+    {
+        static constexpr bool Value = false;
+    };
+    template <typename T>
+    struct IsNoExportStruct<T, std::void_t<decltype(NoExportStruct<T>::StaticStruct())>>
+    {
+        static constexpr bool Value = true;
+    };
+    template <typename T>
+    struct IsStruct
+    {
+        static constexpr bool Value = HasStaticStruct<T>::Value || IsNoExportStruct<T>::Value;
+    };
 
-    template <typename T> struct IsMap { static constexpr bool Value = false; };
-    template <typename T> struct IsMap<TMap<FString, T>> { static constexpr bool Value = IsArrayElement<T>::Value; };
+    template <typename T, typename = void>
+    struct HasToString
+    {
+        static constexpr bool Value = false;
+    };
+    template <typename T>
+    struct HasToString<T, std::void_t<decltype(std::declval<T>().ToString())>>
+    {
+        static constexpr bool Value = true;
+    };
 
 private:
-    // scalar
-    template<class T, std::enable_if_t<IsScalar<T>::Value>* = nullptr>
-    static TSharedPtr<FJsonValue> MakeValue_(const T& Value)
+    template<class T>
+    static TSharedPtr<FJsonValue> MakeValue_(const T& V)
     {
+        // json types
         if constexpr (std::is_same_v<T, TSharedPtr<FJsonValue>>) {
-            return Value;
+            return V;
         }
         else if constexpr (std::is_same_v<T, TSharedPtr<FJsonObject>>) {
-            return MakeShared<FJsonValueObject>(Value);
+            return MakeShared<FJsonValueObject>(V);
         }
+        // bool
         else if constexpr (std::is_same_v<T, bool>) {
-            return MakeShared<FJsonValueBoolean>(Value);
+            return MakeShared<FJsonValueBoolean>(V);
         }
+        // numeric
         else if constexpr (IsNumeric<T>::Value) {
-            return MakeShared<FJsonValueNumber>((double)Value);
+            return MakeShared<FJsonValueNumber>((double)V);
         }
+        // string
         else if constexpr (std::is_same_v<T, FString> || IsStringView<T>::Value || IsCharPtr<T>::Value) {
-            return MakeShared<FJsonValueString>(Value);
+            return MakeShared<FJsonValueString>(V);
         }
-        else {
-            // no return to be compile error
+        // string literal
+        else if constexpr (IsStringLiteral<T>::Value) {
+            return MakeShared<FJsonValueString>(V);
         }
-    }
-
-    // string literal
-    template<class T, std::enable_if_t<IsStringLiteral<T>::Value>* = nullptr>
-    static TSharedPtr<FJsonValue> MakeValue_(const T& Value)
-    {
-        return MakeShared<FJsonValueString>(Value);
-    }
-
-    // array
-    template<class T, std::enable_if_t<IsArray<T>::Value>* = nullptr>
-    static TSharedPtr<FJsonValue> MakeValue_(const T& Value)
-    {
-        if constexpr (HasToJArray<T>::Value) {
-            return ToJArray<T>::Get(Value);
+        // user defined converter
+        else if constexpr (HasToJObject<T>::Value) {
+            return ToJObject<T>::Get(V);
         }
-        else {
-            TArray<TSharedPtr<FJsonValue>> Data;
-            for (auto& V : Value) {
-                Data.Add(MakeValue_(V));
+        else if constexpr (HasToJArray<T>::Value) {
+            return ToJArray<T>::Get(V);
+        }
+        // struct
+        else if constexpr (IsStruct<T>::Value) {
+            if constexpr (HasStaticStruct<T>::Value) {
+                return MakeShared<FJsonValueObject>(FJsonObjectConverter::UStructToJsonObject(V));
             }
-            return MakeShared<FJsonValueArray>(Data);
-        }
-    }
-
-    // map
-    template<class T, std::enable_if_t<IsMap<T>::Value>* = nullptr>
-    static TSharedPtr<FJsonValue> MakeValue_(const T& Value)
-    {
-        auto Data = MakeShared<FJsonObject>();
-        for (auto& KVP : Value) {
-            Data->SetField(KVP.Key, MakeValue_(KVP.Value));
-        }
-        return MakeShared<FJsonValueObject>(Data);
-    }
-
-    // struct
-    template<class T, std::enable_if_t<IsObject<T>::Value>* = nullptr>
-    static TSharedPtr<FJsonValue> MakeValue_(const T& Value)
-    {
-        if constexpr (HasToJObject<T>::Value) {
-            return ToJObject<T>::Get(Value);
-        }
-        else if constexpr (HasStaticStruct<T>::Value) {
-            return MakeShared<FJsonValueObject>(FJsonObjectConverter::UStructToJsonObject(Value));
-        }
-        else if constexpr (IsNoExportStruct<T>::Value) {
-            auto Struct = NoExportStruct<T>::StaticStruct();
-            auto* Ops = Struct->GetCppStructOps();
-            if (Ops && Ops->HasExportTextItem()) {
-                FString StrValue;
-                Ops->ExportTextItem(StrValue, &Value, nullptr, nullptr, PPF_None, nullptr);
-                return MakeShared<FJsonValueString>(StrValue);
-            }
-            else {
-                auto Json = MakeShared<FJsonObject>();
-                if (FJsonObjectConverter::UStructToJsonObject(Struct, &Value, Json)) {
+            else if constexpr (IsNoExportStruct<T>::Value) {
+                auto Struct = NoExportStruct<T>::StaticStruct();
+                auto Ops = Struct->GetCppStructOps();
+                if (Ops && Ops->HasExportTextItem()) {
+                    FString StrValue;
+                    Ops->ExportTextItem(StrValue, &V, nullptr, nullptr, PPF_None, nullptr);
+                    return MakeShared<FJsonValueString>(StrValue);
+                }
+                else {
+                    auto Json = MakeShared<FJsonObject>();
+                    if (!FJsonObjectConverter::UStructToJsonObject(Struct, &V, Json)) {
+                        // should not be here
+                        check(false);
+                    }
                     return MakeShared<FJsonValueObject>(Json);
                 }
             }
-            // should not be here
-            check(false);
-            return nullptr;
+        }
+        // range based
+        else if constexpr (IsIteratable<T>::Value) {
+            // string key & value pairs to Json Object
+            if constexpr (IsStringKVP<T>::Value) {
+                auto Data = MakeShared<FJsonObject>();
+                for (auto& KVP : V) {
+                    Data->SetField(KVP.Key, MakeValue_(KVP.Value));
+                }
+                return MakeShared<FJsonValueObject>(Data);
+            }
+            // others to Json Array
+            else {
+                TArray<TSharedPtr<FJsonValue>> Data;
+                for (auto& E : V) {
+                    Data.Add(MakeValue_(E));
+                }
+                return MakeShared<FJsonValueArray>(Data);
+            }
+        }
+        // all others have ToString()
+        else if constexpr (HasToString<T>::Value) {
+            return MakeShared<FJsonValueString>(V.ToString());
+        }
+        else {
+            // no conversion. will be compile error.
         }
     }
 
