@@ -58,120 +58,102 @@ template<class T> struct NoExportStruct {};
 class JObjectBase
 {
 public:
-    // std::is_arithmetic は bool や char も含んでしまうため、独自に用意
-    template <typename T> struct IsNumeric
-    {
-        static constexpr bool Value =
-            std::is_same_v<T, int32> || std::is_same_v<T, uint32> ||
-            std::is_same_v<T, int64> || std::is_same_v<T, uint64> ||
-            std::is_same_v<T, float> || std::is_same_v<T, double>;
-    };
-
-    template <typename T> struct IsChar
+    template <class T> struct IsChar
     {
         static constexpr bool Value =
             std::is_same_v<T, ANSICHAR> || std::is_same_v<T, UTF8CHAR> || std::is_same_v<T, TCHAR>;
     };
-    template <typename T> struct IsCharPtr { static constexpr bool Value = false; };
-    template <typename T> struct IsCharPtr<T*> { static constexpr bool Value = IsChar<T>::Value; };
-    template <typename T> struct IsCharPtr<const T*> { static constexpr bool Value = IsChar<T>::Value; };
+    template <class T> struct IsCharPtr { static constexpr bool Value = false; };
+    template <class T> struct IsCharPtr<T*> { static constexpr bool Value = IsChar<T>::Value; };
+    template <class T> struct IsCharPtr<const T*> { static constexpr bool Value = IsChar<T>::Value; };
 
-    template <typename T> struct IsStringView { static constexpr bool Value = false; };
-    template <typename T> struct IsStringView<TStringView<T>> { static constexpr bool Value = true; };
+    template <class T> struct IsStringView { static constexpr bool Value = false; };
+    template <class T> struct IsStringView<TStringView<T>> { static constexpr bool Value = true; };
 
-    template <typename T> struct IsStringLiteral { static constexpr bool Value = false; };
-    template <typename T, size_t N> struct IsStringLiteral<T[N]> { static constexpr bool Value = IsChar<T>::Value; };
+    template <class T> struct IsStringLiteral { static constexpr bool Value = false; };
+    template <class T, size_t N> struct IsStringLiteral<T[N]> { static constexpr bool Value = IsChar<T>::Value; };
 
-    template <typename T> struct IsScalar
-    {
-        static constexpr bool Value =
-            std::is_same_v<T, TSharedPtr<FJsonValue>> || std::is_same_v<T, TSharedPtr<FJsonObject>> ||
-            std::is_same_v<T, bool> || IsNumeric<T>::Value ||
-            std::is_same_v<T, FString> || IsStringView<T>::Value || IsCharPtr<T>::Value;
-    };
-
-    template <typename T, typename = void>
+    template <class T, class = void>
     struct HasToJObject
     {
         static constexpr bool Value = false;
     };
-    template <typename T>
+    template <class T>
     struct HasToJObject<T, std::void_t<decltype(ToJObject<T>::Get(T()))>>
     {
         static constexpr bool Value = true;
     };
 
-    template <typename T, typename = void>
+    template <class T, class = void>
     struct HasToJArray
     {
         static constexpr bool Value = false;
     };
-    template <typename T>
+    template <class T>
     struct HasToJArray<T, std::void_t<decltype(ToJArray<T>::Get(T()))>>
     {
         static constexpr bool Value = true;
     };
 
-    template <typename T, typename = void>
+    template <class T, class = void>
     struct IsIteratable
     {
         static constexpr bool Value = false;
     };
-    template <typename T>
-    struct IsIteratable<T, std::void_t<decltype(std::begin(std::declval<T&>()), std::end(std::declval<T&>()))>>
+    template <class T>
+    struct IsIteratable<T, std::void_t<decltype(std::begin(std::declval<T&>()) != std::end(std::declval<T&>()))>>
     {
         static constexpr bool Value = true;
     };
 
-    template <typename T, typename = void>
-    struct IsStringKVP
+    template <class T, class = void>
+    struct HasStringKey
     {
         static constexpr bool Value = false;
     };
-    template <typename T>
-    struct IsStringKVP<T, std::void_t<typename T::KeyType>>
+    template <class T>
+    struct HasStringKey<T, std::void_t<typename T::KeyType>>
     {
-        static constexpr bool Value = std::is_same_v<typename T::KeyType, FString>;
+        static constexpr bool Value = std::is_same_v<T::KeyType, FString> || IsStringView<T::KeyType>::Value;
     };
 
-    template <typename T, typename = void>
+    template <class T, class = void>
     struct HasStaticStruct
     {
         static constexpr bool Value = false;
     };
-    template <typename T>
+    template <class T>
     struct HasStaticStruct<T, std::void_t<decltype(T::StaticStruct())>>
     {
         static constexpr bool Value = true;
     };
-    template <typename T, typename = void>
+    template <class T, class = void>
     struct IsNoExportStruct
     {
         static constexpr bool Value = false;
     };
-    template <typename T>
+    template <class T>
     struct IsNoExportStruct<T, std::void_t<decltype(NoExportStruct<T>::StaticStruct())>>
     {
         static constexpr bool Value = true;
     };
-    template <typename T>
+    template <class T>
     struct IsStruct
     {
         static constexpr bool Value = HasStaticStruct<T>::Value || IsNoExportStruct<T>::Value;
     };
 
-    template <typename T, typename = void>
+    template <class T, class = void>
     struct HasToString
     {
         static constexpr bool Value = false;
     };
-    template <typename T>
+    template <class T>
     struct HasToString<T, std::void_t<decltype(std::declval<T>().ToString())>>
     {
         static constexpr bool Value = true;
     };
 
-private:
     template<class T>
     static TSharedPtr<FJsonValue> MakeValue_(const T& V)
     {
@@ -187,15 +169,11 @@ private:
             return MakeShared<FJsonValueBoolean>(V);
         }
         // numeric
-        else if constexpr (IsNumeric<T>::Value) {
+        else if constexpr (std::is_arithmetic_v<T>) {
             return MakeShared<FJsonValueNumber>((double)V);
         }
         // string
-        else if constexpr (std::is_same_v<T, FString> || IsStringView<T>::Value || IsCharPtr<T>::Value) {
-            return MakeShared<FJsonValueString>(V);
-        }
-        // string literal
-        else if constexpr (IsStringLiteral<T>::Value) {
+        else if constexpr (std::is_same_v<T, FString> || IsStringView<T>::Value || IsCharPtr<T>::Value || IsStringLiteral<T>::Value) {
             return MakeShared<FJsonValueString>(V);
         }
         // user defined converter
@@ -231,7 +209,7 @@ private:
         // range based
         else if constexpr (IsIteratable<T>::Value) {
             // string key & value pairs to Json Object
-            if constexpr (IsStringKVP<T>::Value) {
+            if constexpr (HasStringKey<T>::Value) {
                 auto Data = MakeShared<FJsonObject>();
                 for (auto& KVP : V) {
                     Data->SetField(KVP.Key, MakeValue_(KVP.Value));
@@ -256,7 +234,6 @@ private:
         }
     }
 
-public:
     template<typename... T>
     static TSharedPtr<FJsonValue> MakeValue(T&&... Values)
     {
