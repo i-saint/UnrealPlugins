@@ -749,14 +749,19 @@ bool FHTTPLinkModule::OnTest(const FHttpServerRequest& Request, const FHttpResul
             Json.Set("intArrayMap", Tmp);
         }
         Json.Set({
-            {"ansicharField", "ANSICHAR*" },
-            {"tcharField", TEXT("TCHAR*") },
-            {"boolArrayField", {true, false, true} },
-            {"stringArrayField", {"abc", "def", "ghi"} },
-            {"vectorArrayField", {FVector(0,1,2), FVector(3,4,5)}},
+            {"ansicharField", "ANSICHAR*"},
+            {"tcharField", TEXT("TCHAR*")},
+            {"boolArrayField", true, false, true},
+            {"stringArrayField", "abc", "def", "ghi"},
+            {"vectorArrayField", FVector(0,1,2), FVector(3,4,5)},
             {"guidField", FGuid::NewGuid()},
             {"dateTimeField", FDateTime::Now()},
+            {"arrayWithMultipleTypes", true, 100, "str", FVector(100,200,300)},
             });
+
+        JArray Jarray;
+        Jarray.Add("str", true, 100, FVector(0, 1, 2), FGuid::NewGuid());
+        Json.Set("testJArray", Jarray.ToValue());
         return ServeJson(Result, MoveTemp(Json));
     }
     else {

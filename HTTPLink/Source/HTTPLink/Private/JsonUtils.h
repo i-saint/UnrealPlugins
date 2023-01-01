@@ -156,9 +156,10 @@ public:
     template <typename T> struct IsMap { static constexpr bool Value = false; };
     template <typename T> struct IsMap<TMap<FString, T>> { static constexpr bool Value = IsArrayElement<T>::Value; };
 
+private:
     // scalar
     template<class T, std::enable_if_t<IsScalar<T>::Value>* = nullptr>
-    static inline TSharedPtr<FJsonValue> ToValue(const T& Value)
+    static TSharedPtr<FJsonValue> MakeValue_(const T& Value)
     {
         if constexpr (std::is_same_v<T, TSharedPtr<FJsonValue>>) {
             return Value;
@@ -182,14 +183,14 @@ public:
 
     // string literal
     template<class T, std::enable_if_t<IsStringLiteral<T>::Value>* = nullptr>
-    static inline TSharedPtr<FJsonValue> ToValue(const T& Value)
+    static TSharedPtr<FJsonValue> MakeValue_(const T& Value)
     {
         return MakeShared<FJsonValueString>(Value);
     }
 
     // array
     template<class T, std::enable_if_t<IsArray<T>::Value>* = nullptr>
-    static inline TSharedPtr<FJsonValue> ToValue(const T& Value)
+    static TSharedPtr<FJsonValue> MakeValue_(const T& Value)
     {
         if constexpr (HasToJArray<T>::Value) {
             return ToJArray<T>::Get(Value);
@@ -197,7 +198,7 @@ public:
         else {
             TArray<TSharedPtr<FJsonValue>> Data;
             for (auto& V : Value) {
-                Data.Add(ToValue(V));
+                Data.Add(MakeValue_(V));
             }
             return MakeShared<FJsonValueArray>(Data);
         }
@@ -205,18 +206,18 @@ public:
 
     // map
     template<class T, std::enable_if_t<IsMap<T>::Value>* = nullptr>
-    static inline TSharedPtr<FJsonValue> ToValue(const T& Value)
+    static TSharedPtr<FJsonValue> MakeValue_(const T& Value)
     {
         auto Data = MakeShared<FJsonObject>();
         for (auto& KVP : Value) {
-            Data->SetField(KVP.Key, ToValue(KVP.Value));
+            Data->SetField(KVP.Key, MakeValue_(KVP.Value));
         }
         return MakeShared<FJsonValueObject>(Data);
     }
 
     // struct
     template<class T, std::enable_if_t<IsObject<T>::Value>* = nullptr>
-    static inline TSharedPtr<FJsonValue> ToValue(const T& Value)
+    static TSharedPtr<FJsonValue> MakeValue_(const T& Value)
     {
         if constexpr (HasToJObject<T>::Value) {
             return ToJObject<T>::Get(Value);
@@ -243,6 +244,19 @@ public:
             return nullptr;
         }
     }
+
+public:
+    template<typename... T>
+    static TSharedPtr<FJsonValue> MakeValue(T&&... Values)
+    {
+        if constexpr (sizeof...(T) == 1) {
+            return MakeValue_(std::forward<T>(Values)...);
+        }
+        else {
+            TArray<TSharedPtr<FJsonValue>> Data{ MakeValue_(Values)... };
+            return MakeShared<FJsonValueArray>(Data);
+        }
+    }
 };
 
 class JObject : public JObjectBase
@@ -259,12 +273,16 @@ public:
         Field& operator=(Field&&) noexcept = default;
 
         template<class T>
-        Field(const FString& InName, const T& InValue)
-            : Name(InName), Value(ToValue(InValue))
+        Field(const FString& N, const T& V)
+            : Name(N), Value(MakeValue(V))
         {}
         template<class T>
-        Field(const FString& InName, std::initializer_list<T>&& InValue)
-            : Name(InName), Value(ToValue(MoveTemp(InValue)))
+        Field(const FString& N, std::initializer_list<T>&& V)
+            : Name(N), Value(MakeValue(MoveTemp(V)))
+        {}
+        template<typename... T>
+        Field(const FString& N, T&&... V)
+            : Name(N), Value(MakeValue(std::forward<T>(V)...))
         {}
     };
 
@@ -285,9 +303,18 @@ public:
     JObject() = default;
     JObject(JObject&&) noexcept = default;
 
+    JObject(Field&& V)
+    {
+        Object->SetField(V.Name, V.Value);
+    }
     JObject(std::initializer_list<Field>&& Fields)
     {
         Set(MoveTemp(Fields));
+    }
+    template<typename... T>
+    JObject(const FString& Name, T&&... Values)
+    {
+        Set(Name, std::forward<T>(Values)...);
     }
 
     JObject& Set(std::initializer_list<Field>&& Fields)&
@@ -305,25 +332,28 @@ public:
         return MoveTemp(*this);
     }
 
-    template<class T>
-    JObject& Set(const FString& Name, const T& Value)&
+    template<typename... T>
+    JObject& Set(const FString& Name, T&&... Values)&
     {
-        Object->SetField(Name, ToValue(Value));
+        Object->SetField(Name, MakeValue(std::forward<T>(Values)...));
         return *this;
     }
-    template<class T>
-    JObject&& Set(const FString& Name, const T& Value)&&
+    template<typename... T>
+    JObject&& Set(const FString& Name, T&&... Values)&&
     {
-        Object->SetField(Name, ToValue(Value));
+        Object->SetField(Name, MakeValue(std::forward<T>(Values)...));
         return MoveTemp(*this);
     }
 
     Proxy operator[](const FString& Name) { return { this, &Name }; }
 
-    operator TSharedRef<FJsonObject>() { return Object.ToSharedRef(); }
-    operator TSharedPtr<FJsonObject>() { return Object; }
-    operator TSharedRef<FJsonValue>() { return MakeShared<FJsonValueObject>(Object); }
-    operator TSharedPtr<FJsonValue>() { return MakeShared<FJsonValueObject>(Object); }
+    TSharedPtr<FJsonObject> ToObject() const { return Object; }
+    TSharedPtr<FJsonValue> ToValue() const { return MakeShared<FJsonValueObject>(Object); }
+
+    operator TSharedRef<FJsonObject>() { return ToObject().ToSharedRef(); }
+    operator TSharedPtr<FJsonObject>() { return ToObject(); }
+    operator TSharedRef<FJsonValue>() { return ToValue().ToSharedRef(); }
+    operator TSharedPtr<FJsonValue>() { return ToValue(); }
 
 public:
     TSharedPtr<FJsonObject> Object = MakeShared<FJsonObject>();
@@ -335,45 +365,35 @@ public:
     JArray() = default;
     JArray(JArray&&) noexcept = default;
 
-    template<class T>
-    JArray(std::initializer_list<T>&& Fields)
+    template<typename... T>
+    JArray(T&&... Values)
     {
-        Add(MoveTemp(Fields));
+        Add(std::forward<T>(Values)...);
     }
 
-    template<class T>
-    JArray& Add(std::initializer_list<T>&& Fields)&
+    template<typename... T>
+    JArray& Add(T&&... Values)&
     {
-        for (auto& V : Fields) {
-            Elements.Add(ToValue(Value));
+        for (auto Value : { MakeValue(Values)... }) {
+            Elements.Add(Value);
         }
         return *this;
     }
-    template<class T>
-    JArray&& Add(std::initializer_list<T>&& Fields)&&
+    template<typename... T>
+    JArray&& Add(T&&... Values)&&
     {
-        for (auto& V : Fields) {
-            Elements.Add(ToValue(Value));
+        for (auto Value : { MakeValue(Values)... }) {
+            Elements.Add(Value);
         }
         return MoveTemp(*this);
     }
 
-    template<class T>
-    JArray& Add(const T& Value)&
-    {
-        Elements.Add(ToValue(Value));
-        return *this;
-    }
-    template<class T>
-    JArray&& Add(const T& Value)&&
-    {
-        Elements.Add(ToValue(Value));
-        return MoveTemp(*this);
-    }
+    TArray<TSharedPtr<FJsonValue>> ToArray() const { return Elements; }
+    TSharedPtr<FJsonValue> ToValue() const { return MakeShared<FJsonValueArray>(Elements); }
 
-    operator TSharedRef<FJsonValue>() { return MakeShared<FJsonValueArray>(Elements); }
-    operator TSharedPtr<FJsonValue>() { return MakeShared<FJsonValueArray>(Elements); }
-    operator TArray<TSharedPtr<FJsonValue>>&() { return Elements; }
+    operator TSharedRef<FJsonValue>() { return ToValue().ToSharedRef(); }
+    operator TSharedPtr<FJsonValue>() { return ToValue(); }
+    operator TArray<TSharedPtr<FJsonValue>>() { return Elements; }
 
 public:
     TArray<TSharedPtr<FJsonValue>> Elements;
@@ -381,18 +401,20 @@ public:
 
 
 
-#define DEF_NOEXPORTTYPE(API, T)\
-    API UScriptStruct* Z_Construct_UScriptStruct_##T();\
+#define DEF_NOEXPORTTYPE(T)\
     template<> struct NoExportType<T>\
     {\
-        static UScriptStruct* StaticStruct() { return Z_Construct_UScriptStruct_##T(); }\
+        static UScriptStruct* StaticStruct() {\
+            extern DLLIMPORT UScriptStruct* Z_Construct_UScriptStruct_##T();\
+            return Z_Construct_UScriptStruct_##T();\
+        }\
     }
 
-DEF_NOEXPORTTYPE(COREUOBJECT_API, FVector);
-DEF_NOEXPORTTYPE(COREUOBJECT_API, FQuat);
-DEF_NOEXPORTTYPE(COREUOBJECT_API, FTransform);
-DEF_NOEXPORTTYPE(COREUOBJECT_API, FDateTime);
-DEF_NOEXPORTTYPE(COREUOBJECT_API, FGuid);
+DEF_NOEXPORTTYPE(FVector);
+DEF_NOEXPORTTYPE(FQuat);
+DEF_NOEXPORTTYPE(FTransform);
+DEF_NOEXPORTTYPE(FDateTime);
+DEF_NOEXPORTTYPE(FGuid);
 // 適宜追加
 
 
