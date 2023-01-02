@@ -63,7 +63,7 @@ public:
         static constexpr bool Value = false;
     };
     template <class T>
-    struct HasToJsonValue<T, std::void_t<decltype(ToJsonValue<T>::Get(std::declval<T>()))>>
+    struct HasToJsonValue<T, std::void_t<decltype(std::declval<ToJsonValue<T>>()(std::declval<T>()))>>
     {
         static constexpr bool Value = true;
     };
@@ -155,7 +155,7 @@ public:
     }
 
     template<class T>
-    static TSharedPtr<FJsonValue> MakeValue_(const T& Value)
+    static TSharedPtr<FJsonValue> MakeValue(const T& Value)
     {
         // json types
         if constexpr (std::is_same_v<T, TSharedPtr<FJsonValue>>) {
@@ -166,7 +166,7 @@ public:
         }
         // user defined converter
         else if constexpr (HasToJsonValue<T>::Value) {
-            return ToJsonValue<T>::Get(Value);
+            return ToJsonValue<T>()(Value);
         }
         // bool
         else if constexpr (std::is_same_v<T, bool>) {
@@ -209,7 +209,7 @@ public:
             if constexpr (HasStringKey<T>::Value) {
                 auto Data = MakeShared<FJsonObject>();
                 for (auto& KVP : Value) {
-                    Data->SetField(MakeKey(KVP.Key), MakeValue_(KVP.Value));
+                    Data->SetField(MakeKey(KVP.Key), MakeValue(KVP.Value));
                 }
                 return MakeShared<FJsonValueObject>(Data);
             }
@@ -217,7 +217,7 @@ public:
             else {
                 TArray<TSharedPtr<FJsonValue>> Data;
                 for (auto& E : Value) {
-                    Data.Add(MakeValue_(E));
+                    Data.Add(MakeValue(E));
                 }
                 return MakeShared<FJsonValueArray>(Data);
             }
@@ -232,16 +232,20 @@ public:
     }
 
     template<class V>
-    static TSharedPtr<FJsonValue> MakeValue(const V& Value)
+    static TSharedPtr<FJsonValue> MakeValue(std::initializer_list<V>&& Values)
     {
-        return MakeValue_(Value);
+        TArray<TSharedPtr<FJsonValue>> Data;
+        for (auto& E : Values) {
+            Data.Add(MakeValue(E));
+        }
+        return MakeShared<FJsonValueArray>(Data);
     }
 
     template<class... V>
     static TSharedPtr<FJsonValue> MakeValue(TTuple<V...>&& Values)
     {
         TArray<TSharedPtr<FJsonValue>> Data;
-        VisitTupleElements([&](auto& Value) { Data.Add(MakeValue_(Value)); }, Values);
+        VisitTupleElements([&](auto& Value) { Data.Add(MakeValue(Value)); }, Values);
         return MakeShared<FJsonValueArray>(Data);
     }
 };
@@ -340,6 +344,17 @@ public:
         Object->SetField(MakeKey(Key), MakeValue(MoveTemp(Values)));
     }
 
+    JObject& operator+=(const Field& F)
+    {
+        Set(F);
+        return *this;
+    }
+    JObject& operator+=(std::initializer_list<Field>&& Fields)
+    {
+        Set(MoveTemp(Fields));
+        return *this;
+    }
+
     template<class K> auto operator[](const K& Key) { return Proxy<const K&>{ this, Key }; }
     template<class K> auto operator[](K&& Key) { return Proxy<FString>{ this, MakeKey(Key) }; }
 
@@ -366,11 +381,52 @@ public:
     {
         Add(Forward<V>(Values)...);
     }
+    template<class V>
+    JArray(std::initializer_list<V>&& Values)
+    {
+        Add(MoveTemp(Values));
+    }
+    template<class... V>
+    JArray(TTuple<V...>&& Values)
+    {
+        Add(MoveTemp(Values));
+    }
 
     template<typename... V>
-    void Add(V&&... Values)&
+    void Add(V&&... Values)
     {
         ([&] { Elements.Add(MakeValue(Values)); } (), ...);
+    }
+    template<class V>
+    void Add(std::initializer_list<V>&& Values)
+    {
+        for (auto& E : Values) {
+            Elements.Add(MakeValue(E));
+        }
+    }
+    template<class... V>
+    void Add(TTuple<V...>&& Values)
+    {
+        VisitTupleElements([&](auto& Value) { Add(Value); }, Values);
+    }
+
+    template<typename... V>
+    JArray& operator+=(V&&... Values)
+    {
+        Add(Forward<V>(Values)...);
+        return *this;
+    }
+    template<class V>
+    JArray& operator+=(std::initializer_list<V>&& Values)
+    {
+        Add(MoveTemp(Values));
+        return *this;
+    }
+    template<class... V>
+    JArray& operator+=(TTuple<V...>&& Values)
+    {
+        Add(MoveTemp(Values));
+        return *this;
     }
 
     TSharedPtr<FJsonValue> ToValue() const { return MakeShared<FJsonValueArray>(Elements); }
@@ -409,7 +465,7 @@ public:
 template<class Char>
 struct ToJsonValue<std::basic_string<Char>>
 {
-    static TSharedPtr<FJsonValue> Get(const std::basic_string<Char>& V)
+    TSharedPtr<FJsonValue> operator()(const std::basic_string<Char>& V) const
     {
         return JObject::MakeValue(V.c_str());
     }

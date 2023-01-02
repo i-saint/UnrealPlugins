@@ -735,38 +735,40 @@ bool FHTTPLinkModule::OnTest(const FHttpServerRequest& Request, const FHttpResul
             TMap<FString, FString> Tmp;
             Tmp.Add("Key", "Value");
             Tmp.Add(TEXT("日本語Key"), TEXT("日本語Value"));
-            Json.Set("stringStringMap", Tmp);
+            Json["stringStringMap"] = Tmp;
         }
         {
             TMap<FName, int> Tmp;
             Tmp.Add("Key", 1);
             Tmp.Add(TEXT("日本語Key"), 2);
-            Json.Set("nameIntMap", Tmp);
+            Json["nameIntMap"] = Tmp;
         }
         {
             TMap<FGuid, TArray<int>> Tmp;
             Tmp.Add(FGuid::NewGuid(), { 0,1,2 });
             Tmp.Add(FGuid::NewGuid(), { 3,4,5 });
-            Json.Set("guidIntArrayMap", Tmp);
+            Json["guidIntArrayMap"] = Tmp;
         }
-        Json.Set({
+        Json += {
             {"ansicharField", "ANSICHAR*"},
-            {"tcharField", TEXT("TCHAR*")},
-            {"guidField", FGuid::NewGuid()},
-            {"dateTimeField", FDateTime::Now()},
-            {"boolArrayField", {true, false, true}},
-            {"stringArrayField", MakeTuple("abc")},
-            {"vectorArrayField", MakeTuple(FVector(0,1,2), FVector(3,4,5))},
-            {"multipleTypeArrayField", MakeTuple(true, 100, "str", FVector(100,200,300))},
-            {FDateTime::Now(), true},
-            {FGuid::NewGuid(), true},
-            });
+            { "tcharField", TEXT("TCHAR*") },
+            { "guidField", FGuid::NewGuid() },
+            { "dateTimeField", FDateTime::Now() },
+            { "boolArrayField", {true, false, true} },
+            { "stringArrayField", MakeTuple("abc") },
+            { "vectorArrayField", MakeTuple(FVector(0,1,2), FVector(3,4,5)) },
+            { "multipleTypeArrayField", MakeTuple(true, 100, "str", FVector(100,200,300)) },
+            { FDateTime::Now(), true },
+            { FGuid::NewGuid(), true },
+        };
         Json[FName("proxyWithFNameKey")] = { 0,1,2,3 };
         Json["proxyWithTupleValues"] = MakeTuple(true, 100, "str", FVector(100, 200, 300));
 
         JArray Jarray;
-        Jarray.Add("str", true, 100, FVector(0, 1, 2), FGuid::NewGuid(), FName("FName"), std::string("std::string"));
-        Json.Set("testJArray", Jarray.ToValue());
+        Jarray.Add(true, 1, "str");
+        Jarray += {1, 2, 3};
+        Jarray += MakeTuple(FVector(0, 1, 2), FGuid::NewGuid(), FName("FName"), std::string("std::string"));
+        Json["testJArray"] = Jarray.ToValue();
         return ServeJson(Result, MoveTemp(Json));
     }
     else {
