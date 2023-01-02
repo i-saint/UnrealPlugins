@@ -1,5 +1,4 @@
 ﻿#include "HTTPLink.h"
-#include "./InternalTypes.h"
 #include "./JsonUtils.h"
 
 #include "Editor/UnrealEdEngine.h"
@@ -261,59 +260,6 @@ static FString GetObectPathStr(const FAssetData& Asset)
 
 
 #pragma region InternalTypes
-FActorComponentSummary::FActorComponentSummary(UActorComponent* Component)
-{
-    Setup(Component);
-}
-
-void FActorComponentSummary::Setup(UActorComponent* Component)
-{
-    if (Component) {
-        TypeName = Component->GetClass()->GetName();
-        Name = Component->GetFName();
-    }
-}
-
-FActorSummary::FActorSummary(AActor* Actor)
-{
-    Setup(Actor);
-}
-
-void FActorSummary::Setup(AActor* Actor)
-{
-    if (Actor) {
-        TypeName = Actor->GetClass()->GetName();
-        Label = Actor->GetActorLabel();
-        Name = Actor->GetFName();
-        GUID = Actor->GetActorGuid();
-        Transform = Actor->GetActorTransform();
-
-        for (auto Component : Actor->GetComponents()) {
-            Components.Emplace(Component);
-        }
-    }
-}
-
-
-FAssetSummary::FAssetSummary()
-{
-}
-
-FAssetSummary::FAssetSummary(const FAssetData& Data)
-{
-    Setup(Data);
-}
-
-void FAssetSummary::Setup(const FAssetData& Data)
-{
-    TypeName = Data.GetClass()->GetName();
-    AssetName = Data.AssetName;
-    ObjectPath = GetObectPathStr(Data);
-    PackageName = Data.PackageName;
-}
-
-
-
 FHTTPLinkModule::FSimpleOutputDevice::FSimpleOutputDevice()
     : Super()
 {
@@ -505,11 +451,37 @@ void FHTTPLinkModule::OnScreenshotProcessed()
 
 
 #pragma region Actor Commands
+static JObject MakeActorSummary(AActor* Actor)
+{
+    if (!Actor) {
+        return {};
+    }
+
+    JObject Ret({
+        { "typeName", Actor->GetClass()->GetName() },
+        { "label", Actor->GetActorLabel() },
+        { "name", Actor->GetFName() },
+        { "guid", Actor->GetActorGuid() },
+        { "transform", Actor->GetActorTransform() },
+        });
+
+    JArray Components;
+    for (auto& C : Actor->GetComponents()) {
+        JObject Tmp({
+            { "typeName", C->GetClass()->GetName() },
+            { "name", C->GetName() },
+            });
+        Components.Add(Tmp);
+    }
+    Ret["components"] = Components;
+    return Ret;
+}
+
 bool FHTTPLinkModule::OnActorList(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
 {
     JArray Json;
     EachActor(GetEditorWorld(), [&](AActor* Actor) {
-        Json.Add(FActorSummary(Actor));
+        Json.Add(MakeActorSummary(Actor));
         });
     return ServeJson(Result, MoveTemp(Json));
 }
@@ -612,7 +584,7 @@ bool FHTTPLinkModule::OnActorCreate(const FHttpServerRequest& Request, const FHt
     JObject Json;
     Json["result"] = Actor ? true : false;
     if (Actor) {
-        Json["actor"] = FActorSummary(Actor);
+        Json["actor"] = MakeActorSummary(Actor);
     }
     return ServeJson(Result, MoveTemp(Json));
 }
@@ -704,12 +676,22 @@ bool FHTTPLinkModule::OnLevelSave(const FHttpServerRequest& Request, const FHttp
 
 
 #pragma region Asset Commands
+static JObject MakeAssetSummary(const FAssetData& Data)
+{
+    return JObject({
+        { "typeName", Data.GetClass()->GetName() },
+        { "assetName", Data.AssetName },
+        { "packageName", Data.PackageName },
+        { "objectPath", GetObectPathStr(Data) },
+        });
+}
+
 bool FHTTPLinkModule::OnAssetList(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
 {
     JArray Json;
     auto& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
     AssetRegistryModule.Get().EnumerateAllAssets([&](const FAssetData& Data) {
-        Json.Add(FAssetSummary(Data));
+        Json.Add(MakeAssetSummary(Data));
         return true;
         });
     return ServeJson(Result, MoveTemp(Json));
@@ -772,9 +754,6 @@ bool FHTTPLinkModule::OnTest(const FHttpServerRequest& Request, const FHttpResul
         return ServeJson(Result, MoveTemp(Json));
     }
     else {
-        auto SS = FActorSummary::StaticStruct();
-        auto Path = SS->GetStructPathName();
-        UE_LOG(LogTemp, Log, TEXT("%s"), *Path.ToString());
     }
 #endif
 

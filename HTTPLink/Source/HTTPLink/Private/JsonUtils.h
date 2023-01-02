@@ -307,6 +307,7 @@ public:
 
 public:
     JObject() = default;
+    JObject(const JObject&) = default;
     JObject(JObject&&) noexcept = default;
 
     JObject(const Field& F)
@@ -374,6 +375,7 @@ class JArray : public JObjectBase
 {
 public:
     JArray() = default;
+    JArray(const JArray&) = default;
     JArray(JArray&&) noexcept = default;
 
     template<typename... V>
@@ -429,6 +431,9 @@ public:
         return *this;
     }
 
+    int Num() const { return Elements.Num(); }
+    bool IsEmpty() const { return Elements.IsEmpty(); }
+
     TSharedPtr<FJsonValue> ToValue() const { return MakeShared<FJsonValueArray>(Elements); }
     TArray<TSharedPtr<FJsonValue>> ToArray() const { return Elements; }
 
@@ -462,6 +467,23 @@ public:
 
 
 // ToJsonValue example
+template<>
+struct ToJsonValue<JObject>
+{
+    TSharedPtr<FJsonValue> operator()(const JObject& V) const
+    {
+        return V.ToValue();
+    }
+};
+template<>
+struct ToJsonValue<JArray>
+{
+    TSharedPtr<FJsonValue> operator()(const JArray& V) const
+    {
+        return V.ToValue();
+    }
+};
+
 template<class Char>
 struct ToJsonValue<std::basic_string<Char>>
 {
