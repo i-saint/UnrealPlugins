@@ -726,6 +726,7 @@ bool FHTTPLinkModule::OnAssetImport(const FHttpServerRequest& Request, const FHt
 #pragma region Test Commands
 bool FHTTPLinkModule::OnTest(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
 {
+#if (UE_BUILD_DEBUG || UE_BUILD_DEVELOPMENT || UE_BUILD_TEST)
     FString Case;
     GetQueryParam(Request, "case", Case);
     if (Case == "json") {
@@ -751,13 +752,17 @@ bool FHTTPLinkModule::OnTest(const FHttpServerRequest& Request, const FHttpResul
         Json.Set({
             {"ansicharField", "ANSICHAR*"},
             {"tcharField", TEXT("TCHAR*")},
-            {"boolArrayField", true, false, true},
-            {"stringArrayField", "abc", "def", "ghi"},
-            {"vectorArrayField", FVector(0,1,2), FVector(3,4,5)},
             {"guidField", FGuid::NewGuid()},
             {"dateTimeField", FDateTime::Now()},
-            {"arrayWithMultipleTypes", true, 100, "str", FVector(100,200,300)},
+            {"boolArrayField", {true, false, true}},
+            {"stringArrayField", MakeTuple("abc")},
+            {"vectorArrayField", MakeTuple(FVector(0,1,2), FVector(3,4,5))},
+            {"multipleTypeArrayField", MakeTuple(true, 100, "str", FVector(100,200,300))},
+            {FDateTime::Now(), true},
+            {FGuid::NewGuid(), true},
             });
+        Json[FName("proxyWithFNameKey")] = { 0,1,2,3 };
+        Json["proxyWithTupleValues"] = MakeTuple(true, 100, "str", FVector(100, 200, 300));
 
         JArray Jarray;
         Jarray.Add("str", true, 100, FVector(0, 1, 2), FGuid::NewGuid(), FName("FName"), std::string("std::string"));
@@ -769,6 +774,7 @@ bool FHTTPLinkModule::OnTest(const FHttpServerRequest& Request, const FHttpResul
         auto Path = SS->GetStructPathName();
         UE_LOG(LogTemp, Log, TEXT("%s"), *Path.ToString());
     }
+#endif
 
     return ServeJson(Result, false);
 }
