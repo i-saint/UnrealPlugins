@@ -750,7 +750,7 @@ bool FHTTPLinkModule::OnTest(const FHttpServerRequest& Request, const FHttpResul
         Jarray.Add(true, 1, "str");
         Jarray += {1, 2, 3};
         Jarray += MakeTuple(FVector(0, 1, 2), FGuid::NewGuid(), FName("FName"), std::string("std::string"));
-        Json["testJArray"] = Jarray.ToValue();
+        Json[std::string("testJArray")] = Jarray.ToValue();
         return ServeJson(Result, MoveTemp(Json));
     }
     else {

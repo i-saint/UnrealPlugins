@@ -51,98 +51,56 @@ struct TJsonPrintPolicy<UTF8CHAR>
 };
 
 
+template<class T> struct ToJsonKey {};
 template<class T> struct ToJsonValue {};
 template<class T> struct NoExportStruct {};
 
 class JObjectBase
 {
 public:
-    template <class T, class = void>
-    struct HasToJsonValue
-    {
-        static constexpr bool Value = false;
-    };
-    template <class T>
-    struct HasToJsonValue<T, std::void_t<decltype(std::declval<ToJsonValue<T>>()(std::declval<T>()))>>
-    {
-        static constexpr bool Value = true;
-    };
+#define DEF_VALUE(Name, Result)\
+    template <class T>\
+    struct Name\
+    {\
+        static constexpr bool Value = Result;\
+    }
 
-    template <class T, class = void>
-    struct IsString
-    {
-        static constexpr bool Value = false;
-    };
-    template <class T>
-    struct IsString<T, std::void_t<decltype(FString(std::declval<T>()))>>
-    {
-        // any types FString::FString() accepts will be true
-        static constexpr bool Value = true;
-    };
+#define DEF_VALUE_C(Name, Cond, Result)\
+    template <class T, class = void>\
+    struct Name\
+    {\
+        static constexpr bool Value = false;\
+    };\
+    template <class T>\
+    struct Name<T, std::void_t<Cond>>\
+    {\
+        static constexpr bool Value = Result;\
+    }
 
-    template <class T, class = void>
-    struct HasStaticStruct
-    {
-        static constexpr bool Value = false;
-    };
-    template <class T>
-    struct HasStaticStruct<T, std::void_t<decltype(T::StaticStruct())>>
-    {
-        static constexpr bool Value = true;
-    };
-    template <class T, class = void>
-    struct IsNoExportStruct
-    {
-        static constexpr bool Value = false;
-    };
-    template <class T>
-    struct IsNoExportStruct<T, std::void_t<decltype(NoExportStruct<T>::StaticStruct())>>
-    {
-        static constexpr bool Value = true;
-    };
-    template <class T>
-    struct IsStruct
-    {
-        static constexpr bool Value = HasStaticStruct<T>::Value || IsNoExportStruct<T>::Value;
-    };
+    DEF_VALUE_C(HasToJsonKey, decltype(std::declval<ToJsonKey<T>>()(std::declval<T>())), true);
+    DEF_VALUE_C(HasToJsonValue, decltype(std::declval<ToJsonValue<T>>()(std::declval<T>())), true);
 
-    template <class T, class = void>
-    struct HasToString
-    {
-        static constexpr bool Value = false;
-    };
-    template <class T>
-    struct HasToString<T, std::void_t<decltype(std::declval<T>().ToString())>>
-    {
-        static constexpr bool Value = true;
-    };
+    DEF_VALUE_C(IsString, decltype(FString(std::declval<T>())), true);
+    DEF_VALUE_C(HasToString, decltype(std::declval<T>().ToString()), true);
 
-    template <class T, class = void>
-    struct IsIteratable
-    {
-        static constexpr bool Value = false;
-    };
-    template <class T>
-    struct IsIteratable<T, std::void_t<decltype(std::begin(std::declval<T&>()) != std::end(std::declval<T&>()))>>
-    {
-        static constexpr bool Value = true;
-    };
+    DEF_VALUE_C(HasStaticStruct, decltype(T::StaticStruct()), true);
+    DEF_VALUE_C(IsNoExportStruct, decltype(NoExportStruct<T>::StaticStruct()), true);
+    DEF_VALUE(IsStruct, HasStaticStruct<T>::Value || IsNoExportStruct<T>::Value);
 
-    template <class T, class = void>
-    struct HasStringKey
-    {
-        static constexpr bool Value = false;
-    };
-    template <class T>
-    struct HasStringKey<T, std::void_t<typename T::KeyType>>
-    {
-        static constexpr bool Value = IsString<T::KeyType>::Value || HasToString<T::KeyType>::Value;
-    };
+    DEF_VALUE_C(IsIteratable, decltype(std::begin(std::declval<T&>()) != std::end(std::declval<T&>())), true);
+    DEF_VALUE_C(HasStringKey, typename T::KeyType, IsString<T::KeyType>::Value || HasToString<T::KeyType>::Value);
+
+#undef DEF_VALUE
+#undef DEF_VALUE_C
+
 
     template<class T>
     static FString MakeKey(const T& Key)
     {
-        if constexpr (IsString<T>::Value) {
+        if constexpr (HasToJsonKey<T>::Value) {
+            return ToJsonKey<T>()(Key);
+        }
+        else if constexpr (IsString<T>::Value) {
             return Key;
         }
         else if constexpr (HasToString<T>::Value) {
@@ -466,7 +424,17 @@ public:
 #undef DEF_CLASS
 
 
-// ToJsonValue example
+// ToJsonKey & ToJsonValue
+
+template<class Char>
+struct ToJsonKey<std::basic_string<Char>>
+{
+    FString operator()(const std::basic_string<Char>& V) const
+    {
+        return FString(V.c_str());
+    }
+};
+
 template<>
 struct ToJsonValue<JObject>
 {
@@ -483,7 +451,6 @@ struct ToJsonValue<JArray>
         return V.ToValue();
     }
 };
-
 template<class Char>
 struct ToJsonValue<std::basic_string<Char>>
 {
