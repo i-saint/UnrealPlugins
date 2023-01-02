@@ -751,6 +751,10 @@ bool FHTTPLinkModule::OnTest(const FHttpServerRequest& Request, const FHttpResul
         Jarray += {1, 2, 3};
         Jarray += MakeTuple(FVector(0, 1, 2), FGuid::NewGuid(), FName("FName"), std::string("std::string"));
         Json[std::string("testJArray")] = Jarray.ToValue();
+
+        for (auto& KVP : Json) {
+            UE_LOG(LogTemp, Log, TEXT("%s"), *KVP.Key);
+        }
         return ServeJson(Result, MoveTemp(Json));
     }
     else {

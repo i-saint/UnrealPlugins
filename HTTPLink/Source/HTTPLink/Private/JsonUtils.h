@@ -184,9 +184,6 @@ public:
         else if constexpr (HasToString<T>::Value) {
             return MakeShared<FJsonValueString>(Value.ToString());
         }
-        else {
-            // no conversion. will be compile error.
-        }
     }
 
     template<class V>
@@ -326,6 +323,21 @@ public:
     operator TSharedPtr<FJsonValue>() { return ToValue(); }
 
 public:
+    using Container     = TMap<FString, TSharedPtr<FJsonValue>>;
+    using Iterator      = Container::TRangedForIterator;
+    using ConstIterator = Container::TRangedForConstIterator;
+
+    bool IsValid() const { return Object != nullptr; }
+    int Num() const      { return IsValid() ? Object->Values.Num() : 0; }
+    bool IsEmpty() const { return Num() != 0; }
+
+    // const_cast because TSharedPtr::operator-> always return non const raw pointer
+    Iterator      begin()       { return Object->Values.begin(); }
+    ConstIterator begin() const { return const_cast<const Container&>(Object->Values).begin(); }
+    Iterator      end()         { return Object->Values.end(); }
+    ConstIterator end() const   { return const_cast<const Container&>(Object->Values).end(); }
+
+public:
     TSharedPtr<FJsonObject> Object = MakeShared<FJsonObject>();
 };
 
@@ -389,15 +401,25 @@ public:
         return *this;
     }
 
-    int Num() const { return Elements.Num(); }
-    bool IsEmpty() const { return Elements.IsEmpty(); }
-
     TSharedPtr<FJsonValue> ToValue() const { return MakeShared<FJsonValueArray>(Elements); }
     TArray<TSharedPtr<FJsonValue>> ToArray() const { return Elements; }
 
     operator TSharedRef<FJsonValue>() { return ToValue().ToSharedRef(); }
     operator TSharedPtr<FJsonValue>() { return ToValue(); }
     operator TArray<TSharedPtr<FJsonValue>>() { return Elements; }
+
+public:
+    using Container = TArray<TSharedPtr<FJsonValue>>;
+    using Iterator = Container::RangedForIteratorType;
+    using ConstIterator = Container::RangedForConstIteratorType;
+
+    int Num() const { return Elements.Num(); }
+    bool IsEmpty() const { return Elements.IsEmpty(); }
+
+    Iterator      begin()       { return Elements.begin(); }
+    ConstIterator begin() const { return Elements.begin(); }
+    Iterator      end()         { return Elements.end(); }
+    ConstIterator end() const   { return Elements.end(); }
 
 public:
     TArray<TSharedPtr<FJsonValue>> Elements;
