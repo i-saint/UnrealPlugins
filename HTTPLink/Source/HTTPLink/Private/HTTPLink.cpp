@@ -720,21 +720,21 @@ bool FHTTPLinkModule::OnTest(const FHttpServerRequest& Request, const FHttpResul
             Json["stringStringMap"] = Tmp;
         }
         {
-            TMap<FName, int> Tmp;
-            Tmp.Add("Key", 1);
-            Tmp.Add(TEXT("日本語Key"), 2);
-            Json["nameIntMap"] = Tmp;
-        }
-        {
             TMap<FGuid, TArray<int>> Tmp;
             Tmp.Add(FGuid::NewGuid(), { 0,1,2 });
             Tmp.Add(FGuid::NewGuid(), { 3,4,5 });
             Json["guidIntArrayMap"] = Tmp;
         }
         {
+            TMap<FName, int> Tmp;
+            Tmp.Add("tmpMapField1", 1);
+            Tmp.Add("tmpMapField2", 2);
+            Json += Tmp;
+        }
+        {
             TMap<int, int> Tmp;
-            Tmp.Add(0, 1);
-            Json["intIntMap"] = Tmp;
+            Tmp.Add(100, 1);
+            Json += Tmp;
         }
         Json += {
             {"ansicharField", "ANSICHAR*"},
@@ -766,10 +766,10 @@ bool FHTTPLinkModule::OnTest(const FHttpServerRequest& Request, const FHttpResul
             TTuple<bool, int, FString, FVector> MultiTypeArray;
             bool _1; int _2; FString _3; int _4; int _5; FVector _6; FGuid _7; FName _8; std::string _9;
 
-            Json.Get("guidIntArrayMap", GuidIntArrayMap);
-            Json.Get("vectorArrayField", VectorArray);
-            Json.Get("multipleTypeArrayField", MultiTypeArray);
-            Json.Get("testJArray", Tie(_1, _2, _3, _4, _5, _6, _7, _8, _9));
+            Json["guidIntArrayMap"] >> GuidIntArrayMap;
+            Json["vectorArrayField"] >> VectorArray;
+            Json["multipleTypeArrayField"] >> MultiTypeArray;
+            Json["testJArray"] >> Tie(_1, _2, _3, _4, _5, _6, _7, _8, _9);
             UE_LOG(LogTemp, Log, TEXT("%s"), ANSI_TO_TCHAR(_9.c_str()));
         }
         return ServeJson(Result, MoveTemp(Json));
