@@ -753,7 +753,7 @@ bool FHTTPLinkModule::OnTest(const FHttpServerRequest& Request, const FHttpResul
 
         JArray Jarray;
         Jarray.Add(true, 1, "str");
-        Jarray += {1, 2, 3};
+        Jarray += {2, 3};
         Jarray += MakeTuple(FVector(0, 1, 2), FGuid::NewGuid(), FName("FName"), std::string("std::string"));
         Json[std::string("testJArray")] = Jarray.ToValue();
 
@@ -764,10 +764,13 @@ bool FHTTPLinkModule::OnTest(const FHttpServerRequest& Request, const FHttpResul
             TMap<FGuid, TArray<int>> GuidIntArrayMap;
             FVector VectorArray[2];
             TTuple<bool, int, FString, FVector> MultiTypeArray;
+            bool _1; int _2; FString _3; int _4; int _5; FVector _6; FGuid _7; FName _8; std::string _9;
+
             Json.Get("guidIntArrayMap", GuidIntArrayMap);
             Json.Get("vectorArrayField", VectorArray);
             Json.Get("multipleTypeArrayField", MultiTypeArray);
-            UE_LOG(LogTemp, Log, TEXT("%s"), *MultiTypeArray.Get<2>());
+            Json.Get("testJArray", Tie(_1, _2, _3, _4, _5, _6, _7, _8, _9));
+            UE_LOG(LogTemp, Log, TEXT("%s"), ANSI_TO_TCHAR(_9.c_str()));
         }
         return ServeJson(Result, MoveTemp(Json));
     }

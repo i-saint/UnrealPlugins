@@ -53,6 +53,8 @@ struct TJsonPrintPolicy<UTF8CHAR>
 
 template<class T> struct ToJsonKey {};
 template<class T> struct ToJsonValue {};
+template<class T> struct FromJsonKey {};
+template<class T> struct FromJsonValue {};
 template<class T> struct NoExportStruct {};
 
 class JObjectBase
@@ -93,9 +95,15 @@ public:
     DEF_VALUE_C(HasKeyType, typename T::KeyType, true);
     DEF_VALUE_C(HasStringCompatibleKeyType, typename T::KeyType, CanToString<typename T::KeyType>::Value);
 
-    DEF_VALUE_C(CanConstructFromString, decltype(T(std::declval<FString>())), true);
+
+    DEF_VALUE_C(HasFromJsonKey, decltype(std::declval<FromJsonKey<T>>()(std::declval<FString>(), std::declval<T&>())), true);
+    DEF_VALUE_C(HasFromJsonValue, decltype(std::declval<FromJsonValue<T>>()(std::declval<const TSharedPtr<FJsonValue>>(), std::declval<T&>())), true);
+
+    DEF_VALUE_C(CanConstructFromFString, decltype(T(std::declval<FString>())), true);
     DEF_VALUE_C(CanConstructFromCString, decltype(T(std::declval<const TCHAR*>())), true);
     DEF_VALUE_C(CanLexFromString, decltype(LexFromString(std::declval<T&>(), std::declval<const TCHAR*>())), true);
+    DEF_VALUE(CanConstructFromString, CanConstructFromFString<T>::Value || CanConstructFromCString<T>::Value || CanLexFromString<T>::Value);
+
     DEF_VALUE_C(IsArrayLikeContainer, decltype(std::declval<T>().Add(std::declval<typename T::ElementType>())), true);
     DEF_VALUE_C(IsMapLikeContainer, decltype(std::declval<T>().Add(std::declval<typename T::KeyType>(), std::declval<typename T::ValueType>())), true);
 
@@ -224,24 +232,33 @@ public:
 
 
     template<class T>
-    static bool FromKey(const FString& Key, T& Dst)
+    static bool FromString(const FString& Str, T& Dst)
     {
-        if constexpr (CanConstructFromString<T>::Value) {
-            Dst = T(Key);
+        if constexpr (HasFromJsonKey<T>::Value) {
+            return FromJsonKey()(Str, Dst);
+        }
+        else if constexpr (CanConstructFromFString<T>::Value) {
+            Dst = T(Str);
             return true;
         }
         else if constexpr (CanConstructFromCString<T>::Value) {
-            Dst = T(*Key);
+            Dst = T(*Str);
             return true;
         }
         else if constexpr (CanLexFromString<T>::Value) {
-            LexFromString(Dst, *Key);
+            LexFromString(Dst, *Str);
             return true;
         }
     }
 
     template<class T>
-    static bool FromValue(TSharedPtr<FJsonValue> Value, T& Dst)
+    static bool FromKey(const FString& Key, T& Dst)
+    {
+        return FromString(Key, Dst);
+    }
+
+    template<class T>
+    static bool FromValue(const TSharedPtr<FJsonValue> Value, T& Dst)
     {
         if constexpr (std::is_same_v<T, TSharedPtr<FJsonValue>>) {
             Dst = Value;
@@ -249,6 +266,10 @@ public:
         }
         else if constexpr (std::is_same_v<T, TSharedPtr<FJsonObject>>) {
             return Value->TryGetObject(Dst);
+        }
+        // user defined converter
+        else if constexpr (HasFromJsonValue<T>::Value) {
+            return FromJsonValue<T>()(Value, Dst);
         }
         // bool
         else if constexpr (std::is_same_v<T, bool>) {
@@ -260,9 +281,9 @@ public:
         }
         // struct
         else if constexpr (HasStaticStruct<T>::Value) {
-            TSharedPtr<FJsonObject> Obj;
+            TSharedPtr<FJsonObject>* Obj;
             if (Value->TryGetObject(Obj)) {
-                return FJsonObjectConverter::JsonObjectToUStruct(Obj.ToSharedRef(), &Dst);
+                return FJsonObjectConverter::JsonObjectToUStruct(Obj->ToSharedRef(), &Dst);
             }
             return false;
         }
@@ -288,41 +309,25 @@ public:
         else if constexpr (IsMapLikeContainer<T>::Value) {
             TSharedPtr<FJsonObject>* Obj;
             if (Value->TryGetObject(Obj)) {
+                bool Ok = true;
                 for (auto& KVP : (*Obj)->Values) {
                     typename T::ElementType Tmp;
                     if (FromKey(KVP.Key, Tmp.Key) && FromValue(KVP.Value, Tmp.Value)) {
-                        Dst.Add(Tmp);
+                        Dst.Add(MoveTemp(Tmp));
+                    }
+                    else {
+                        Ok = false;
                     }
                 }
-                return true;
+                return Ok;
             }
             return false;
         }
-        // array like container
-        else if constexpr (IsArrayLikeContainer<T>::Value) {
-            TArray<TSharedPtr<FJsonValue>>* Elements;
-            if (Value->TryGetArray(Elements)) {
-                for (auto& E : *Elements) {
-                    typename T::ElementType Tmp;
-                    if (FromValue(E, Tmp)) {
-                        Dst.Add(Tmp);
-                    }
-                }
-                return true;
-            }
-            return false;
-        }
-        // raw array
-        else if constexpr (std::is_array_v<T>) {
-            TArray<TSharedPtr<FJsonValue>>* Elements;
-            if (Value->TryGetArray(Elements)) {
-                int I = 0;
-                for (auto& E : *Elements) {
-                    if (I < std::size(Dst)) {
-                        FromValue(E, Dst[I++]);
-                    }
-                }
-                return true;
+        // array
+        else if constexpr (IsArrayLikeContainer<T>::Value || std::is_array_v<T>) {
+            TArray<TSharedPtr<FJsonValue>>* Array;
+            if (Value->TryGetArray(Array)) {
+                return FromArray(*Array, Dst);
             }
             return false;
         }
@@ -330,43 +335,90 @@ public:
         else if constexpr (CanConstructFromString<T>::Value) {
             FString Str;
             if (Value->TryGetString(Str)) {
-                Dst = T(Str);
-                return true;
+                return FromString(Str, Dst);
             }
             return false;
         }
     }
+    template<class... V>
+    static bool FromValue(const TSharedPtr<FJsonValue> Value, TTuple<V...>& Dsts)
+    {
+        TArray<TSharedPtr<FJsonValue>>* Array;
+        if (Value->TryGetArray(Array)) {
+            return FromArray(*Array, Dsts);
+        }
+        return false;
+    }
+    template<class... V>
+    static bool FromValue(const TSharedPtr<FJsonValue> Value, TTuple<V&...>&& Dsts)
+    {
+        TArray<TSharedPtr<FJsonValue>>* Array;
+        if (Value->TryGetArray(Array)) {
+            return FromArray(*Array, MoveTemp(Dsts));
+        }
+        return false;
+    }
 
-    template<class... V>
-    static bool FromValue(TSharedPtr<FJsonValue> Value, TTuple<V...>& Dsts)
+    template<class T>
+    static bool FromArray(const TArray<TSharedPtr<FJsonValue>>& Values, T& Dst)
     {
-        TArray<TSharedPtr<FJsonValue>>* Elements;
-        if (Value->TryGetArray(Elements)) {
-            int I = 0;
-            VisitTupleElements([&](auto& Dst) {
-                if (I < Elements->Num()) {
-                    FromValue((*Elements)[I++], Dst);
+        // array like container
+        if constexpr (IsArrayLikeContainer<T>::Value) {
+            bool Ok = true;
+            for (auto& E : Values) {
+                typename T::ElementType Tmp;
+                if (FromValue(E, Tmp)) {
+                    Dst.Add(MoveTemp(Tmp));
                 }
-                }, Dsts);
-            return true;
+                else {
+                    Ok = false;
+                }
+            }
+            return Ok;
         }
-        return false;
+        // raw array
+        else if constexpr (std::is_array_v<T>) {
+            bool Ok = true;
+            int I = 0;
+            for (auto& E : Values) {
+                if (I < std::size(Dst)) {
+                    if (!FromValue(E, Dst[I++])) {
+                        Ok = false;
+                    }
+                }
+            }
+            return Ok;
+        }
     }
     template<class... V>
-    static bool FromValue(TSharedPtr<FJsonValue> Value, TTuple<V&...>&& Dsts)
+    static bool FromArray(const TArray<TSharedPtr<FJsonValue>>& Values, TTuple<V...>& Dsts)
     {
-        TArray<TSharedPtr<FJsonValue>>* Elements;
-        if (Value->TryGetArray(Elements)) {
-            int I = 0;
-            VisitTupleElements([&](auto& Dst) {
-                if (I < Elements->Num()) {
-                    FromValue((*Elements)[I++], Dst);
+        bool Ok = true;
+        int I = 0;
+        VisitTupleElements([&](auto& Dst) {
+            if (I < Values.Num()) {
+                if (!FromValue(Values[I++], Dst)) {
+                    Ok = false;
                 }
-                }, Dsts);
-            return true;
-        }
-        return false;
+            }
+            }, Dsts);
+        return Ok;
     }
+    template<class... V>
+    static bool FromArray(const TArray<TSharedPtr<FJsonValue>>& Values, TTuple<V&...>&& Dsts)
+    {
+        bool Ok = true;
+        int I = 0;
+        VisitTupleElements([&](auto& Dst) {
+            if (I < Values.Num()) {
+                if (!FromValue(Values[I++], Dst)) {
+                    Ok = false;
+                }
+            }
+            }, Dsts);
+        return Ok;
+    }
+
 };
 
 class JObject : public JObjectBase
@@ -382,20 +434,12 @@ public:
         Field& operator=(const Field&) = default;
         Field& operator=(Field&&) noexcept = default;
 
-        template<class K, class V>
-        Field(const K& InKey, const V& InValue)
-            : Key(MakeKey(InKey)), Value(MakeValue(InValue))
+        template<class K, class... V>
+        Field(const K& InKey, V&&... Value)
+            : Key(MakeKey(InKey)), Value(MakeValue(Forward<V>(Value)...))
         {}
         template<class K, class V>
         Field(const K& InKey, std::initializer_list<V>&& InValues)
-            : Key(MakeKey(InKey)), Value(MakeValue(MoveTemp(InValues)))
-        {}
-        template<class K, class... V>
-        Field(const K& InKey, TTuple<V...>&& InValues)
-            : Key(MakeKey(InKey)), Value(MakeValue(MoveTemp(InValues)))
-        {}
-        template<class K, class... V>
-        Field(const K& InKey, TTuple<V&...>&& InValues)
             : Key(MakeKey(InKey)), Value(MakeValue(MoveTemp(InValues)))
         {}
     };
@@ -406,23 +450,13 @@ public:
         JObject* Host;
         K Key;
 
-        template<class V>
-        void operator=(const V& Value) const
+        template<class... V>
+        void operator=(V&&... Value) const
         {
-            Host->Set(Key, Value);
+            Host->Set(Key, Forward<V>(Value)...);
         }
         template<class V>
         void operator=(std::initializer_list<V>&& Values) const
-        {
-            Host->Set(Key, MoveTemp(Values));
-        }
-        template<class... V>
-        void operator=(TTuple<V...>&& Values) const
-        {
-            Host->Set(Key, MoveTemp(Values));
-        }
-        template<class... V>
-        void operator=(TTuple<V&...>&& Values) const
         {
             Host->Set(Key, MoveTemp(Values));
         }
@@ -455,25 +489,15 @@ public:
             Object->SetField(F.Key, F.Value);
         }
     }
-    template<class K, class V>
-    void Set(const K& Key, const V& Value)
-    {
-        Object->SetField(MakeKey(Key), MakeValue(Value));
-    }
-    template<class K, class V>
-    void Set(const K& Key, std::initializer_list<V>&& Values)
-    {
-        Object->SetField(MakeKey(Key), MakeValue(MoveTemp(Values)));
-    }
     template<class K, class... V>
-    void Set(const K& Key, TTuple<V...>&& Values)
+    void Set(const K& Key, V&&... Value)
     {
-        Object->SetField(MakeKey(Key), MakeValue(MoveTemp(Values)));
+        Object->SetField(MakeKey(Key), MakeValue(Forward<V>(Value)...));
     }
-    template<class K, class... V>
-    void Set(const K& Key, TTuple<V&...>&& Values)
+    template<class K, class V>
+    void Set(const K& Key, std::initializer_list<V>&& Value)
     {
-        Object->SetField(MakeKey(Key), MakeValue(MoveTemp(Values)));
+        Object->SetField(MakeKey(Key), MakeValue(MoveTemp(Value)));
     }
 
     void operator+=(const Field& F)
@@ -486,19 +510,11 @@ public:
     }
 
 
-    template<class K, class V>
-    bool Get(const K& Key, V& Dst)
-    {
-        if (auto Value = Object->Values.Find(MakeKey(Key))) {
-            return FromValue(*Value, Dst);
-        }
-        return false;
-    }
     template<class K, class... V>
-    bool Get(const K& Key, TTuple<V&...>&& Dst)
+    bool Get(const K& Key, V&&... Dst)
     {
         if (auto Value = Object->Values.Find(MakeKey(Key))) {
-            return FromValue(*Value, MoveTemp(Dst));
+            return FromValue(*Value, Forward<V>(Dst)...);
         }
         return false;
     }
@@ -543,28 +559,18 @@ public:
     JArray& operator=(JArray&&) = default;
     JArray& operator=(const JArray&) = default;
 
-    template<typename... V>
-    JArray(V&&... Values)
+    template<class... V>
+    JArray(V&&... Value)
     {
-        Add(Forward<V>(Values)...);
+        Add(Forward<V>(Value)...);
     }
     template<class V>
     JArray(std::initializer_list<V>&& Values)
     {
         Add(MoveTemp(Values));
     }
-    template<class... V>
-    JArray(TTuple<V...>&& Values)
-    {
-        Add(MoveTemp(Values));
-    }
-    template<class... V>
-    JArray(TTuple<V&...>&& Values)
-    {
-        Add(MoveTemp(Values));
-    }
 
-    template<typename... V>
+    template<class... V>
     void Add(V&&... Values)
     {
         ([&] { Elements.Add(MakeValue(Values)); } (), ...);
@@ -587,30 +593,24 @@ public:
         VisitTupleElements([&](auto& Value) { Add(Value); }, Values);
     }
 
-    template<typename... V>
-    JArray& operator+=(V&&... Values)
+    template<class... V>
+    void operator+=(V&&... Value)
     {
-        Add(Forward<V>(Values)...);
-        return *this;
+        Add(Forward<V>(Value)...);
     }
     template<class V>
-    JArray& operator+=(std::initializer_list<V>&& Values)
+    void operator+=(std::initializer_list<V>&& Values)
     {
         Add(MoveTemp(Values));
-        return *this;
     }
+
+
     template<class... V>
-    JArray& operator+=(TTuple<V...>&& Values)
+    bool Get(V&&... Dst)
     {
-        Add(MoveTemp(Values));
-        return *this;
+        return FromArray(Elements, Forward<V>(Dst)...);
     }
-    template<class... V>
-    JArray& operator+=(TTuple<V&...>&& Values)
-    {
-        Add(MoveTemp(Values));
-        return *this;
-    }
+
 
     TSharedPtr<FJsonValue> ToValue() const { return MakeShared<FJsonValueArray>(Elements); }
     TArray<TSharedPtr<FJsonValue>> ToArray() const { return Elements; }
@@ -692,3 +692,34 @@ struct ToJsonValue<std::basic_string<Char>>
         return JObject::MakeValue(V.c_str());
     }
 };
+
+template<class Char>
+struct FromJsonKey<std::basic_string<Char>>
+{
+    bool operator()(const FString& Key, std::basic_string<Char>& Dst) const
+    {
+        if constexpr (std::is_same_v<Char, char>) {
+            Dst = TCHAR_TO_ANSI(*Key);
+            return true;
+        }
+        else if constexpr (std::is_same_v<Char, wchar_t>) {
+            Dst = *Key;
+            return true;
+        }
+    }
+};
+
+template<class Char>
+struct FromJsonValue<std::basic_string<Char>>
+{
+    bool operator()(const TSharedPtr<FJsonValue> Value, std::basic_string<Char>& Dst) const
+    {
+        FString Str;
+        if (Value->TryGetString(Str)) {
+            return FromJsonKey<std::basic_string<Char>>()(Str, Dst);
+        }
+        return false;
+    }
+};
+
+
