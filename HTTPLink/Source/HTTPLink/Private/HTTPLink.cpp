@@ -731,6 +731,11 @@ bool FHTTPLinkModule::OnTest(const FHttpServerRequest& Request, const FHttpResul
             Tmp.Add(FGuid::NewGuid(), { 3,4,5 });
             Json["guidIntArrayMap"] = Tmp;
         }
+        {
+            TMap<int, int> Tmp;
+            Tmp.Add(0, 1);
+            Json["intIntMap"] = Tmp;
+        }
         Json += {
             {"ansicharField", "ANSICHAR*"},
             { "tcharField", TEXT("TCHAR*") },
@@ -754,6 +759,15 @@ bool FHTTPLinkModule::OnTest(const FHttpServerRequest& Request, const FHttpResul
 
         for (auto& KVP : Json) {
             UE_LOG(LogTemp, Log, TEXT("%s"), *KVP.Key);
+        }
+        {
+            TMap<FGuid, TArray<int>> GuidIntArrayMap;
+            FVector VectorArray[2];
+            TTuple<bool, int, FString, FVector> MultiTypeArray;
+            Json.Get("guidIntArrayMap", GuidIntArrayMap);
+            Json.Get("vectorArrayField", VectorArray);
+            Json.Get("multipleTypeArrayField", MultiTypeArray);
+            UE_LOG(LogTemp, Log, TEXT("%s"), *MultiTypeArray.Get<2>());
         }
         return ServeJson(Result, MoveTemp(Json));
     }
