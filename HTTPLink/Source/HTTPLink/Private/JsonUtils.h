@@ -10,6 +10,7 @@
 #include "Serialization/JsonTypes.h"
 #include "Serialization/JsonWriter.h"
 #include "JsonObjectConverter.h"
+#include <string>
 
 
 // ちゃんと日本語を出力できる版 TJsonPrintPolicy<UTF8CHAR>
@@ -721,7 +722,7 @@ public:
     using ConstIterator = Container::RangedForConstIteratorType;
 
     int Num() const { return Elements.Num(); }
-    bool IsEmpty() const { return Elements.IsEmpty(); }
+    bool IsEmpty() const { return Num() == 0; }
 
     Iterator      begin()       { return Elements.begin(); }
     ConstIterator begin() const { return Elements.begin(); }

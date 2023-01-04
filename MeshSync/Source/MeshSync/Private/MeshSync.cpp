@@ -9,6 +9,12 @@
 #include "RawMesh.h"
 #include "ScopedTransaction.h"
 
+#if ENGINE_MAJOR_VERSION <= 4
+using FVector3f = FVector;
+using FVector2f = FVector2D;
+#endif
+
+
 static const FName MeshSyncTabName("MeshSync");
 
 #define LOCTEXT_NAMESPACE "FMeshSyncModule"
