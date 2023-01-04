@@ -1,7 +1,7 @@
 ﻿#pragma once
 
 #include "UObject/NoExportTypes.h"
-#include "UObject/TemplateString.h"
+//#include "UObject/TemplateString.h"
 
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
@@ -27,7 +27,7 @@ struct TJsonPrintPolicy<UTF8CHAR>
     {
         uint8 Buf[4];
         for (TCHAR C : String) {
-            int N = UE::Core::Private::FTCHARToUTF8_Convert::Utf8FromCodepoint(C, Buf, 4);
+            int N = Utf8FromCodepoint(C, Buf);
             Stream->Serialize(Buf, N);
         }
     }
@@ -47,6 +47,48 @@ struct TJsonPrintPolicy<UTF8CHAR>
     static inline void WriteDouble(FArchive* Stream, double Value)
     {
         WriteStringRaw(Stream, FString::Printf(TEXT("%.17g"), Value));
+    }
+
+    // copy from FTCHARToUTF8_Convert because it is deprecated on 5.1
+    template <typename BufferType, size_t Len>
+    static int32 Utf8FromCodepoint(uint32 Codepoint, BufferType (&Dst)[Len])
+    {
+        if (!StringConv::IsValidCodepoint(Codepoint))
+        {
+            Codepoint = UNICODE_BOGUS_CHAR_CODEPOINT;
+        }
+        else if (StringConv::IsHighSurrogate(Codepoint) || StringConv::IsLowSurrogate(Codepoint)) // UTF-8 Characters are not allowed to encode codepoints in the surrogate pair range
+        {
+            Codepoint = UNICODE_BOGUS_CHAR_CODEPOINT;
+        }
+
+        // Do the encoding...
+        using ToType = ANSICHAR;
+        BufferType* It = Dst;
+        if (Codepoint < 0x80)
+        {
+            *(It++) = (ToType)Codepoint;
+        }
+        else if (Codepoint < 0x800)
+        {
+            *(It++) = (ToType)((Codepoint >> 6) | 128 | 64);
+            *(It++) = (ToType)((Codepoint & 0x3F) | 128);
+        }
+        else if (Codepoint < 0x10000)
+        {
+            *(It++) = (ToType)((Codepoint >> 12) | 128 | 64 | 32);
+            *(It++) = (ToType)(((Codepoint >> 6) & 0x3F) | 128);
+            *(It++) = (ToType)((Codepoint & 0x3F) | 128);
+        }
+        else
+        {
+            *(It++) = (ToType)((Codepoint >> 18) | 128 | 64 | 32 | 16);
+            *(It++) = (ToType)(((Codepoint >> 12) & 0x3F) | 128);
+            *(It++) = (ToType)(((Codepoint >> 6) & 0x3F) | 128);
+            *(It++) = (ToType)((Codepoint & 0x3F) | 128);
+        }
+
+        return UE_PTRDIFF_TO_INT32(It - Dst);
     }
 };
 

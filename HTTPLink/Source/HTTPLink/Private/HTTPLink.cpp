@@ -560,13 +560,13 @@ bool FHTTPLinkModule::OnActorCreate(const FHttpServerRequest& Request, const FHt
 
     FString Label;
     FVector Location = FVector::Zero();
-    FString AssetPath;
+    FName AssetPath;
     GetQueryParam(Request, "label", Label);
     GetQueryParam(Request, "location", Location);
     GetQueryParam(Request, "assetpath", AssetPath);
 
     AActor* Actor = nullptr;
-    if (!AssetPath.IsEmpty()) {
+    if (!AssetPath.IsNone()) {
         auto& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
         FAssetData AssetData = AssetRegistryModule.Get().GetAssetByObjectPath(AssetPath);
         if (AssetData.IsValid()) {
