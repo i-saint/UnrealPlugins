@@ -525,26 +525,41 @@ public:
         K Key;
 
         template<class... V>
-        void operator=(V&&... Value) const
+        void Set(V&&... Value) const
         {
             Host->Set(Key, Forward<V>(Value)...);
         }
         template<class V>
-        void operator=(std::initializer_list<V>&& Values) const
+        void Set(std::initializer_list<V>&& Values) const
         {
             Host->Set(Key, MoveTemp(Values));
         }
+        template<class... V>
+        bool Get(V&&... Value) const
+        {
+            return Host->Get(Key, Forward<V>(Value)...);
+        }
 
+        template<class... V>
+        void operator=(V&&... Value) const
+        {
+            Set(Forward<V>(Value)...);
+        }
+        template<class V>
+        void operator=(std::initializer_list<V>&& Values) const
+        {
+            Set(MoveTemp(Values));
+        }
         template<class... V>
         bool operator>>(V&&... Value) const
         {
-            return Host->Get(Key, Forward<V>(Value)...);
+            return Get(Forward<V>(Value)...);
         }
         template<class T>
         operator T() const
         {
             T Tmp{};
-            Host->Get(Key, Tmp);
+            Get(Tmp);
             return MoveTemp(Tmp);
         }
     };
@@ -649,7 +664,7 @@ public:
 
 
     template<class K, class... V>
-    bool Get(const K& Key, V&&... Dst)
+    bool Get(const K& Key, V&&... Dst) const
     {
         if (auto Value = Data->Values.Find(ToJKey(Key))) {
             return FromJValue(*Value, Forward<V>(Dst)...);
@@ -765,7 +780,7 @@ public:
 
 
     template<class... V>
-    bool Get(V&&... Dst)
+    bool Get(V&&... Dst) const
     {
         return FromJArray(Data, Forward<V>(Dst)...);
     }

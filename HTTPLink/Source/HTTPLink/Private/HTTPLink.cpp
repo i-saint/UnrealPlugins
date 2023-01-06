@@ -137,6 +137,45 @@ inline bool GetQueryParam(const FHttpServerRequest& Request, const char* Name, F
 }
 
 
+struct ParamHandler
+{
+    TFunction<bool(const FHttpServerRequest& Request)> FromRequest;
+    TFunction<bool(const JObject& Json)> FromJson;
+
+    template<class T>
+    ParamHandler(const char* Name, T& Dst)
+    {
+        FromRequest = [this, Name, &Dst](const FHttpServerRequest& Request) {
+            return GetQueryParam(Request, Name, Dst);
+        };
+        FromJson = [this, Name, &Dst](const JObject& Json) {
+            return Json.Get(Name, Dst);
+        };
+    }
+};
+
+static int GetQueryParams(const FHttpServerRequest& Request, std::initializer_list<ParamHandler>&& Placeholders)
+{
+    int Ret = 0;
+    FString JsonStr;
+    if (GetQueryParam(Request, "json", JsonStr)) {
+        JObject JsonObj = JObject::Parse(JsonStr);
+        for (auto& P : Placeholders) {
+            if (P.FromJson(JsonObj)) {
+                ++Ret;
+            }
+        }
+    }
+    else {
+        for (auto& P : Placeholders) {
+            if (P.FromRequest(Request)) {
+                ++Ret;
+            }
+        }
+    }
+    return Ret;
+}
+
 
 static void MakeEditorWindowForeground()
 {
@@ -406,7 +445,7 @@ void FHTTPLinkModule::CopyLinkAddress(const TArray<AActor*> Actors)
 bool FHTTPLinkModule::OnEditorExec(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
 {
     FString Command;
-    if (GetQueryParam(Request, "c", Command) || GetQueryParam(Request, "command", Command)) {
+    if (GetQueryParams(Request, { {"c", Command}, {"command", Command} })) {
         Outputs.Clear();
         GUnrealEd->Exec(GetEditorWorld(), *Command, Outputs);
     }
@@ -438,7 +477,7 @@ bool FHTTPLinkModule::OnEditorScreenshot(const FHttpServerRequest& Request, cons
             }
 
             bool ShowUI = true;
-            GetQueryParam(Request, "ui", ShowUI);
+            GetQueryParams(Request, { {"ui", ShowUI} });
             // 撮影リクエスト発行
             FScreenshotRequest::RequestScreenshot(ScreenshotPath, ShowUI, false);
             bScreenshotInProgress = true;
@@ -506,15 +545,19 @@ static TFunction<AActor* ()> GetActorFinder(const FHttpServerRequest& Request)
     FGuid GUID;
     FName Name;
     FString Label;
-    if (GetQueryParam(Request, "guid", GUID)) {
+    GetQueryParams(Request, {
+        { "guid", GUID },  {"name", Name}, {"label", Label}
+        });
+
+    if (GUID.IsValid()) {
         // GUID で 検索 (一意)
         return [World, GUID]() { return FindActor(World, [&](AActor* A) { return A->GetActorGuid() == GUID; }); };
     }
-    else if (GetQueryParam(Request, "name", Name)) {
+    else if (!Name.IsNone()) {
         // FName で検索 (一意)
         return [World, Name]() { return FindActor(World, [&](AActor* A) { return A->GetFName() == Name; }); };
     }
-    else if (GetQueryParam(Request, "label", Label)) {
+    else if (!Label.IsEmpty()) {
         // Label で検索 (一意ではない)
         return [World, Label]() { return FindActor(World, [&](AActor* A) { return A->GetActorLabel() == Label; }); };
     }
@@ -571,9 +614,9 @@ bool FHTTPLinkModule::OnActorCreate(const FHttpServerRequest& Request, const FHt
     FString Label;
     FVector Location = FVector::Zero();
     FString AssetPath;
-    GetQueryParam(Request, "label", Label);
-    GetQueryParam(Request, "location", Location);
-    GetQueryParam(Request, "assetpath", AssetPath);
+    GetQueryParams(Request, {
+        { "label", Label }, { "location", Location }, { "assetpath", AssetPath}
+        });
 
     AActor* Actor = nullptr;
     if (!AssetPath.IsEmpty()) {
@@ -631,8 +674,10 @@ bool FHTTPLinkModule::OnLevelNew(const FHttpServerRequest& Request, const FHttpR
 
     bool R = false;
     FString AssetPath, TemplatePath;
-    GetQueryParam(Request, "assetpath", AssetPath);
-    GetQueryParam(Request, "templatepath", TemplatePath);
+    GetQueryParams(Request, {
+        { "assetpath", AssetPath }, { "templatepath", TemplatePath}
+        });
+
     if (!AssetPath.IsEmpty()) {
         auto LevelEditorSubsystem = GEditor->GetEditorSubsystem<ULevelEditorSubsystem>();
         if (!TemplatePath.IsEmpty()) {
@@ -653,7 +698,9 @@ bool FHTTPLinkModule::OnLevelLoad(const FHttpServerRequest& Request, const FHttp
 
     bool R = false;
     FString AssetPath;
-    GetQueryParam(Request, "assetpath", AssetPath);
+    GetQueryParams(Request, {
+        { "assetpath", AssetPath },
+        });
 
     if (!AssetPath.IsEmpty()) {
         auto LevelEditorSubsystem = GEditor->GetEditorSubsystem<ULevelEditorSubsystem>();
@@ -670,7 +717,9 @@ bool FHTTPLinkModule::OnLevelSave(const FHttpServerRequest& Request, const FHttp
 
     bool R = false;
     bool All = false;
-    GetQueryParam(Request, "all", All);
+    GetQueryParams(Request, {
+        { "all", All },
+        });
 
     auto LevelEditorSubsystem = GEditor->GetEditorSubsystem<ULevelEditorSubsystem>();
     if (All) {
@@ -719,7 +768,10 @@ bool FHTTPLinkModule::OnTest(const FHttpServerRequest& Request, const FHttpResul
 {
 #if (UE_BUILD_DEBUG || UE_BUILD_DEVELOPMENT || UE_BUILD_TEST)
     FString Case;
-    GetQueryParam(Request, "case", Case);
+    GetQueryParams(Request, {
+        { "case", Case },
+        });
+
     if (Case == "json") {
         JObject Json;
         {
