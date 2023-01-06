@@ -6,6 +6,7 @@
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "Serialization/JsonReader.h"
+#include "Serialization/JsonWriter.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonTypes.h"
 #include "Serialization/JsonWriter.h"
@@ -549,6 +550,14 @@ public:
     };
 
 public:
+    static JObject Parse(FString JsonString)
+    {
+        JObject Ret;
+        auto Reader = TJsonReaderFactory<>::Create(JsonString);
+        FJsonSerializer::Deserialize(*Reader, Ret.Data);
+        return Ret;
+    }
+
     JObject() = default;
     JObject(JObject&&) = default;
     JObject(const JObject&) = default;
@@ -556,14 +565,20 @@ public:
     JObject& operator=(const JObject&) = default;
 
 
+    JObject(const TSharedPtr<FJsonObject>& Other)
+        : Data(Other)
+    {}
+    JObject(TSharedPtr<FJsonObject>&& Other)
+        : Data(MoveTemp(Other))
+    {}
+    JObject(std::initializer_list<Field>&& Fields)
+    {
+        Set(MoveTemp(Fields));
+    }
     template<class... T>
     JObject(T&&... Value)
     {
         Set(Forward<V>(Value)...);
-    }
-    JObject(std::initializer_list<Field>&& Fields)
-    {
-        Set(MoveTemp(Fields));
     }
 
     // Set("field1", 1);
@@ -572,21 +587,21 @@ public:
     template<class K, class... V>
     void Set(const K& Key, V&&... Value)
     {
-        Object->SetField(ToJKey(Key), ToJValue(Forward<V>(Value)...));
+        Data->SetField(ToJKey(Key), ToJValue(Forward<V>(Value)...));
     }
 
     // Set("field", {1,2,3});
     template<class K, class V>
     void Set(const K& Key, std::initializer_list<V>&& Value)
     {
-        Object->SetField(ToJKey(Key), ToJValue(MoveTemp(Value)));
+        Data->SetField(ToJKey(Key), ToJValue(MoveTemp(Value)));
     }
 
     // Set({{"field1", 1}, {"field2", "abc"}});
     void Set(std::initializer_list<Field>&& Fields)
     {
         for (auto& F : Fields) {
-            Object->SetField(F.Key, F.Value);
+            Data->SetField(F.Key, F.Value);
         }
     }
 
@@ -597,7 +612,28 @@ public:
         TSharedPtr<FJsonValue> Val = ToJValue(MapOrStruct);
         TSharedPtr<FJsonObject>* Obj;
         if (Val && Val->TryGetObject(Obj)) {
-            Object->Values.Append(MoveTemp((*Obj)->Values));
+            Data->Values.Append(MoveTemp((*Obj)->Values));
+        }
+    }
+
+    void Append(const FJsonObject& Other)
+    {
+        Data->Values.Append(Other.Values);
+    }
+    void Append(FJsonObject&& Other)
+    {
+        Data->Values.Append(MoveTemp(Other.Values));
+    }
+    void Append(const JObject& Other)
+    {
+        if (Other.Data) {
+            Append(*Other.Data);
+        }
+    }
+    void Append(JObject&& Other)
+    {
+        if (Other.Data) {
+            Append(MoveTemp(*Other.Data));
         }
     }
 
@@ -615,7 +651,7 @@ public:
     template<class K, class... V>
     bool Get(const K& Key, V&&... Dst)
     {
-        if (auto Value = Object->Values.Find(ToJKey(Key))) {
+        if (auto Value = Data->Values.Find(ToJKey(Key))) {
             return FromJValue(*Value, Forward<V>(Dst)...);
         }
         return false;
@@ -625,8 +661,8 @@ public:
     template<class K> auto operator[](const K& Key) { return Proxy<const K&>{ this, Key }; }
     template<class K> auto operator[](K&& Key) { return Proxy<FString>{ this, ToJKey(Key) }; }
 
-    TSharedPtr<FJsonObject> ToObject() const { return Object; }
-    TSharedPtr<FJsonValue> ToValue() const { return MakeShared<FJsonValueObject>(Object); }
+    TSharedPtr<FJsonObject> ToObject() const { return Data; }
+    TSharedPtr<FJsonValue> ToValue() const { return MakeShared<FJsonValueObject>(Data); }
 
     operator TSharedRef<FJsonObject>() { return ToObject().ToSharedRef(); }
     operator TSharedPtr<FJsonObject>() { return ToObject(); }
@@ -634,54 +670,66 @@ public:
     operator TSharedPtr<FJsonValue>() { return ToValue(); }
 
 public:
-    using Container     = TMap<FString, TSharedPtr<FJsonValue>>;
-    using Iterator      = Container::TRangedForIterator;
-    using ConstIterator = Container::TRangedForConstIterator;
+    using Container = TMap<FString, TSharedPtr<FJsonValue>>;
 
-    bool IsValid() const { return Object != nullptr; }
-    int Num() const      { return IsValid() ? Object->Values.Num() : 0; }
+    bool IsValid() const { return Data != nullptr; }
+    int Num() const      { return IsValid() ? Data->Values.Num() : 0; }
     bool IsEmpty() const { return Num() != 0; }
 
     // const_cast because TSharedPtr::operator-> always return non const raw pointer
-    Iterator      begin()       { return Object->Values.begin(); }
-    ConstIterator begin() const { return const_cast<const Container&>(Object->Values).begin(); }
-    Iterator      end()         { return Object->Values.end(); }
-    ConstIterator end() const   { return const_cast<const Container&>(Object->Values).end(); }
+    auto begin()       { return Data->Values.begin(); }
+    auto begin() const { return const_cast<const Container&>(Data->Values).begin(); }
+    auto end()         { return Data->Values.end(); }
+    auto end() const   { return const_cast<const Container&>(Data->Values).end(); }
 
 public:
-    TSharedPtr<FJsonObject> Object = MakeShared<FJsonObject>();
+    TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
 };
 
 class JArray : public JObjectBase
 {
 public:
+    static JArray Parse(FString JsonString)
+    {
+        JArray Ret;
+        auto Reader = TJsonReaderFactory<>::Create(JsonString);
+        FJsonSerializer::Deserialize(*Reader, Ret.Data);
+        return Ret;
+    }
+
     JArray() = default;
     JArray(JArray&&) = default;
     JArray(const JArray&) = default;
     JArray& operator=(JArray&&) = default;
     JArray& operator=(const JArray&) = default;
 
-    template<class... V>
-    JArray(V&&... Value)
-    {
-        Add(Forward<V>(Value)...);
-    }
+    JArray(const TArray<TSharedPtr<FJsonValue>>& Other)
+        : Data(Other)
+    {}
+    JArray(TArray<TSharedPtr<FJsonValue>>&& Other)
+        : Data(MoveTemp(Other))
+    {}
     template<class V>
     JArray(std::initializer_list<V>&& Values)
     {
         Add(MoveTemp(Values));
     }
+    template<class... V>
+    JArray(V&&... Value)
+    {
+        Add(Forward<V>(Value)...);
+    }
 
     template<class... V>
     void Add(V&&... Values)
     {
-        ([&] { Elements.Add(ToJValue(Values)); } (), ...);
+        ([&] { Data.Add(ToJValue(Values)); } (), ...);
     }
     template<class V>
     void Add(std::initializer_list<V>&& Values)
     {
         for (auto& E : Values) {
-            Elements.Add(ToJValue(E));
+            Data.Add(ToJValue(E));
         }
     }
     template<class... V>
@@ -706,36 +754,43 @@ public:
         Add(MoveTemp(Values));
     }
 
+    void Append(const JArray& Other)
+    {
+        Data.Append(Other.Data);
+    }
+    void Append(JArray&& Other)
+    {
+        Data.Append(MoveTemp(Other.Data));
+    }
+
 
     template<class... V>
     bool Get(V&&... Dst)
     {
-        return FromJArray(Elements, Forward<V>(Dst)...);
+        return FromJArray(Data, Forward<V>(Dst)...);
     }
 
 
-    TSharedPtr<FJsonValue> ToValue() const { return MakeShared<FJsonValueArray>(Elements); }
-    TArray<TSharedPtr<FJsonValue>> ToArray() const { return Elements; }
+    TSharedPtr<FJsonValue> ToValue() const { return MakeShared<FJsonValueArray>(Data); }
+    TArray<TSharedPtr<FJsonValue>> ToArray() const { return Data; }
 
     operator TSharedRef<FJsonValue>() { return ToValue().ToSharedRef(); }
     operator TSharedPtr<FJsonValue>() { return ToValue(); }
-    operator TArray<TSharedPtr<FJsonValue>>() { return Elements; }
+    operator TArray<TSharedPtr<FJsonValue>>() { return Data; }
 
 public:
     using Container = TArray<TSharedPtr<FJsonValue>>;
-    using Iterator = Container::RangedForIteratorType;
-    using ConstIterator = Container::RangedForConstIteratorType;
 
-    int Num() const { return Elements.Num(); }
+    int Num() const { return Data.Num(); }
     bool IsEmpty() const { return Num() == 0; }
 
-    Iterator      begin()       { return Elements.begin(); }
-    ConstIterator begin() const { return Elements.begin(); }
-    Iterator      end()         { return Elements.end(); }
-    ConstIterator end() const   { return Elements.end(); }
+    auto begin()       { return Data.begin(); }
+    auto begin() const { return Data.begin(); }
+    auto end()         { return Data.end(); }
+    auto end() const   { return Data.end(); }
 
 public:
-    TArray<TSharedPtr<FJsonValue>> Elements;
+    TArray<TSharedPtr<FJsonValue>> Data;
 };
 
 

@@ -256,6 +256,16 @@ static FString GetObectPathStr(const FAssetData& Asset)
     return Asset.ObjectPath.ToString();
 #endif
 }
+
+static FAssetData GetAssetByObjectPath(FString Path)
+{
+    static auto& AssetRegistry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry").Get();
+#if ENGINE_MAJOR_VERSION >= 5 && ENGINE_MINOR_VERSION >= 1
+    return AssetRegistry.GetAssetByObjectPath(FSoftObjectPath(Path));
+#else
+    return AssetRegistry.GetAssetByObjectPath(FName(Path));
+#endif
+}
 #pragma endregion Utilities
 
 
@@ -560,15 +570,14 @@ bool FHTTPLinkModule::OnActorCreate(const FHttpServerRequest& Request, const FHt
 
     FString Label;
     FVector Location = FVector::Zero();
-    FName AssetPath;
+    FString AssetPath;
     GetQueryParam(Request, "label", Label);
     GetQueryParam(Request, "location", Location);
     GetQueryParam(Request, "assetpath", AssetPath);
 
     AActor* Actor = nullptr;
-    if (!AssetPath.IsNone()) {
-        auto& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
-        FAssetData AssetData = AssetRegistryModule.Get().GetAssetByObjectPath(AssetPath);
+    if (!AssetPath.IsEmpty()) {
+        FAssetData AssetData = GetAssetByObjectPath(AssetPath);
         if (AssetData.IsValid()) {
             auto UndoScope = FScopedTransaction(LOCTEXT("OnCreateActor", "OnCreateActor"));
             auto* EditorActorSubsystem = GEditor->GetEditorSubsystem<UEditorActorSubsystem>();
