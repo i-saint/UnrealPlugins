@@ -742,8 +742,8 @@ bool FHTTPLinkModule::OnTest(const FHttpServerRequest& Request, const FHttpResul
             { "guidField", FGuid::NewGuid() },
             { "dateTimeField", FDateTime::Now() },
             { "boolArrayField", {true, false, true} },
-            { "stringArrayField", MakeTuple("abc") },
-            { "vectorArrayField", MakeTuple(FVector(0,1,2), FVector(3,4,5)) },
+            { "enumField", EUnit::Bytes },
+            { "vectorArrayField", {FVector(0,1,2), FVector(3,4,5)} },
             { "multipleTypeArrayField", MakeTuple(true, 100, "str", FVector(100,200,300)) },
             { FDateTime::Now(), true },
             { FGuid::NewGuid(), true },
@@ -754,7 +754,7 @@ bool FHTTPLinkModule::OnTest(const FHttpServerRequest& Request, const FHttpResul
         JArray Jarray;
         Jarray.Add(true, 1, "str");
         Jarray += {2, 3};
-        Jarray += MakeTuple(FVector(0, 1, 2), FGuid::NewGuid(), FName("FName"), std::string("std::string"));
+        Jarray += MakeTuple(FVector(0, 1, 2), FGuid::NewGuid(), EUnit::Bytes, std::string("std::string"));
         Json[std::string("testJArray")] = Jarray.ToValue();
 
         for (auto& KVP : Json) {
@@ -764,7 +764,7 @@ bool FHTTPLinkModule::OnTest(const FHttpServerRequest& Request, const FHttpResul
             TMap<FGuid, TArray<int>> GuidIntArrayMap;
             FVector VectorArray[2];
             TTuple<bool, int, FString, FVector> MultiTypeArray;
-            bool _1; int _2; FString _3; int _4; int _5; FVector _6; FGuid _7; FName _8; std::string _9;
+            bool _1; int _2; FString _3; int _4; int _5; FVector _6; FGuid _7; EUnit _8; std::string _9;
 
             Json["guidIntArrayMap"] >> GuidIntArrayMap;
             Json["vectorArrayField"] >> VectorArray;

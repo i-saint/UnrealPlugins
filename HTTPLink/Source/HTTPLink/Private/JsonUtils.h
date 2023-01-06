@@ -127,7 +127,7 @@ public:
     DEF_VALUE_C(HasToJsonValue, decltype(std::declval<ToJsonValue<T>>()(std::declval<T>())), true);
 
     DEF_VALUE(CanToBool, (std::is_same_v<T, bool>));
-    DEF_VALUE(CanToNumber, std::is_arithmetic_v<T>);
+    DEF_VALUE(CanToNumber, std::is_arithmetic_v<T> || std::is_enum_v<T>);
 
     DEF_VALUE_C(CanConstructString, decltype(FString(std::declval<T>())), true);
     DEF_VALUE_C(HasToString, decltype(std::declval<T>().ToString()), true);
@@ -147,7 +147,7 @@ public:
     DEF_VALUE_C(HasFromJsonValue, decltype(std::declval<FromJsonValue<T>>()(std::declval<const TSharedPtr<FJsonValue>>(), std::declval<T&>())), true);
 
     DEF_VALUE(CanFromBool, (std::is_same_v<T, bool>));
-    DEF_VALUE(CanFromNumber, std::is_arithmetic_v<T>);
+    DEF_VALUE(CanFromNumber, std::is_arithmetic_v<T> || std::is_enum_v<T>);
 
     DEF_VALUE_C(CanFromFString, decltype(T(std::declval<FString>())), true);
     DEF_VALUE_C(CanFromCString, decltype(T(std::declval<const TCHAR*>())), true);
@@ -205,7 +205,7 @@ public:
         else if constexpr (CanToBool<T>::Value) {
             return MakeShared<FJsonValueBoolean>(Value);
         }
-        // number
+        // number & enum
         else if constexpr (CanToNumber<T>::Value) {
             return MakeShared<FJsonValueNumber>((double)Value);
         }
@@ -330,9 +330,14 @@ public:
         else if constexpr (CanFromBool<T>::Value) {
             return Value->TryGetBool(Dst);
         }
-        // numeric
+        // number & enum
         else if constexpr (CanFromNumber<T>::Value) {
-            return Value->TryGetNumber(Dst);
+            double Tmp;
+            if (Value->TryGetNumber(Tmp)) {
+                Dst = static_cast<T>(Tmp);
+                return true;
+            }
+            return false;
         }
         // struct
         else if constexpr (HasStaticStruct<T>::Value) {

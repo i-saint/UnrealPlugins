@@ -1,5 +1,3 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
-
 #include "MeshSync.h"
 #include "MeshSyncStyle.h"
 #include "MeshSyncCommands.h"
@@ -21,8 +19,6 @@ static const FName MeshSyncTabName("MeshSync");
 
 void FMeshSyncModule::StartupModule()
 {
-    // This code will execute after your module is loaded into memory; the exact timing is specified in the .uplugin file per-module
-    
     FMeshSyncStyle::Initialize();
     FMeshSyncStyle::ReloadTextures();
 
@@ -40,9 +36,6 @@ void FMeshSyncModule::StartupModule()
 
 void FMeshSyncModule::ShutdownModule()
 {
-    // This function may be called during shutdown to clean up your module.  For modules that support dynamic reloading,
-    // we call this function before unloading the module.
-
     UToolMenus::UnRegisterStartupCallback(this);
 
     UToolMenus::UnregisterOwner(this);
@@ -54,7 +47,6 @@ void FMeshSyncModule::ShutdownModule()
 
 void FMeshSyncModule::RegisterMenus()
 {
-    // Owner will be used for cleanup in call to UToolMenus::UnregisterOwner
     FToolMenuOwnerScoped OwnerScoped(this);
 
     {
