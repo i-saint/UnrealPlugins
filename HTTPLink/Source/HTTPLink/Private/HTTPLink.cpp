@@ -154,24 +154,33 @@ struct ParamHandler
     }
 };
 
-static int GetQueryParams(const FHttpServerRequest& Request, std::initializer_list<ParamHandler>&& Placeholders)
+template<class... V>
+static int GetQueryParams(const FHttpServerRequest& Request, std::initializer_list<ParamHandler>&& Placeholders, V&&... Additional)
 {
     int Ret = 0;
     FString JsonStr;
     if (GetQueryParam(Request, "json", JsonStr)) {
         JObject JsonObj = JObject::Parse(JsonStr);
-        for (auto& P : Placeholders) {
-            if (P.FromJson(JsonObj)) {
-                ++Ret;
+        auto HandleJson = [&](auto& Placeholders) {
+            for (auto& P : Placeholders) {
+                if (P.FromJson(JsonObj)) {
+                    ++Ret;
+                }
             }
-        }
+        };
+        HandleJson(Placeholders);
+        ([&] { HandleJson(Additional); } (), ...);
     }
     else {
-        for (auto& P : Placeholders) {
-            if (P.FromRequest(Request)) {
-                ++Ret;
+        auto HandleQueryParams = [&](auto& Placeholders) {
+            for (auto& P : Placeholders) {
+                if (P.FromRequest(Request)) {
+                    ++Ret;
+                }
             }
-        }
+        };
+        HandleQueryParams(Placeholders);
+        ([&] { HandleQueryParams(Additional); } (), ...);
     }
     return Ret;
 }
@@ -535,7 +544,7 @@ bool FHTTPLinkModule::OnActorList(const FHttpServerRequest& Request, const FHttp
     return ServeJson(Result, MoveTemp(Json));
 }
 
-static TFunction<AActor* ()> GetActorFinder(const FHttpServerRequest& Request)
+static TFunction<AActor* ()> GetActorFinder(const FHttpServerRequest& Request, std::initializer_list<ParamHandler>&& Additional = {})
 {
     auto* World = GetEditorWorld();
     if (!World) {
@@ -547,7 +556,7 @@ static TFunction<AActor* ()> GetActorFinder(const FHttpServerRequest& Request)
     FString Label;
     GetQueryParams(Request, {
         { "guid", GUID },  {"name", Name}, {"label", Label}
-        });
+        }, MoveTemp(Additional));
 
     if (GUID.IsValid()) {
         // GUID で 検索 (一意)
@@ -569,8 +578,7 @@ bool FHTTPLinkModule::OnActorSelect(const FHttpServerRequest& Request, const FHt
 {
     bool R = false;
     bool Additive = false;
-    TFunction<AActor* ()> Finder = GetActorFinder(Request);
-    GetQueryParam(Request, "additive", Additive);
+    TFunction<AActor* ()> Finder = GetActorFinder(Request, { {"additive", Additive} });
 
     if (Finder) {
         if (!Additive) {
