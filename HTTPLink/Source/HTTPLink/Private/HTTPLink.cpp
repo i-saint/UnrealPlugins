@@ -154,8 +154,8 @@ struct ParamHandler
     }
 };
 
-template<class... V>
-static int GetQueryParams(const FHttpServerRequest& Request, std::initializer_list<ParamHandler>&& Placeholders, V&&... Additional)
+template<class... T>
+static int GetQueryParamsImpl(const FHttpServerRequest& Request, T&&... PlaceholdersList)
 {
     int Ret = 0;
     FString JsonStr;
@@ -168,8 +168,7 @@ static int GetQueryParams(const FHttpServerRequest& Request, std::initializer_li
                 }
             }
         };
-        HandleJson(Placeholders);
-        ([&] { HandleJson(Additional); } (), ...);
+        ([&] { HandleJson(PlaceholdersList); } (), ...);
     }
     else {
         auto HandleQueryParams = [&](auto& Placeholders) {
@@ -179,10 +178,14 @@ static int GetQueryParams(const FHttpServerRequest& Request, std::initializer_li
                 }
             }
         };
-        HandleQueryParams(Placeholders);
-        ([&] { HandleQueryParams(Additional); } (), ...);
+        ([&] { HandleQueryParams(PlaceholdersList); } (), ...);
     }
     return Ret;
+}
+template<class... T>
+static int GetQueryParams(const FHttpServerRequest& Request, std::initializer_list<ParamHandler>&& Placeholders, T&&... Additional)
+{
+    return GetQueryParamsImpl(Request, Placeholders, Forward<T>(Additional)...);
 }
 
 
