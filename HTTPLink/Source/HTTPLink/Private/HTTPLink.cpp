@@ -139,32 +139,34 @@ inline bool GetQueryParam(const FHttpServerRequest& Request, const char* Name, F
 
 struct ParamHandler
 {
+    const char* Name;
     TFunction<bool(const FHttpServerRequest& Request)> FromRequest;
     TFunction<bool(const JObject& Json)> FromJson;
 
     template<class T>
-    ParamHandler(const char* Name, T& Dst)
+    ParamHandler(const char* InName, T& Dst)
+        : Name(InName)
     {
-        FromRequest = [this, Name, &Dst](const FHttpServerRequest& Request) {
+        FromRequest = [this, &Dst](const FHttpServerRequest& Request) {
             return GetQueryParam(Request, Name, Dst);
         };
-        FromJson = [this, Name, &Dst](const JObject& Json) {
+        FromJson = [this, &Dst](const JObject& Json) {
             return Json.Get(Name, Dst);
         };
     }
 };
 
 template<class... T>
-static int GetQueryParamsImpl(const FHttpServerRequest& Request, T&&... PlaceholdersList)
+static TArray<FString> GetQueryParamsImpl(const FHttpServerRequest& Request, T&&... PlaceholdersList)
 {
-    int Ret = 0;
+    TArray<FString> Ret;
     FString JsonStr;
     if (GetQueryParam(Request, "json", JsonStr)) {
         JObject JsonObj = JObject::Parse(JsonStr);
         auto HandleJson = [&](auto& Placeholders) {
             for (auto& P : Placeholders) {
                 if (P.FromJson(JsonObj)) {
-                    ++Ret;
+                    Ret.Add(P.Name);
                 }
             }
         };
@@ -174,7 +176,7 @@ static int GetQueryParamsImpl(const FHttpServerRequest& Request, T&&... Placehol
         auto HandleQueryParams = [&](auto& Placeholders) {
             for (auto& P : Placeholders) {
                 if (P.FromRequest(Request)) {
-                    ++Ret;
+                    Ret.Add(P.Name);
                 }
             }
         };
@@ -183,7 +185,7 @@ static int GetQueryParamsImpl(const FHttpServerRequest& Request, T&&... Placehol
     return Ret;
 }
 template<class... T>
-static int GetQueryParams(const FHttpServerRequest& Request, std::initializer_list<ParamHandler>&& Placeholders, T&&... Additional)
+static TArray<FString> GetQueryParams(const FHttpServerRequest& Request, std::initializer_list<ParamHandler>&& Placeholders, T&&... Additional)
 {
     return GetQueryParamsImpl(Request, Placeholders, Forward<T>(Additional)...);
 }
@@ -370,6 +372,7 @@ void FHTTPLinkModule::StartupModule()
         AddHandler("/actor/create", OnActorCreate);
         AddHandler("/actor/delete", OnActorDelete);
         AddHandler("/actor/merge", OnActorMerge);
+        AddHandler("/actor/transform", OnActorTransform);
 
         AddHandler("/level/new", OnLevelNew);
         AddHandler("/level/load", OnLevelLoad);
@@ -457,7 +460,8 @@ void FHTTPLinkModule::CopyLinkAddress(const TArray<AActor*> Actors)
 bool FHTTPLinkModule::OnEditorExec(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
 {
     FString Command;
-    if (GetQueryParams(Request, { {"c", Command}, {"command", Command} })) {
+    GetQueryParams(Request, { {"c", Command}, {"command", Command} });
+    if (!Command.IsEmpty()) {
         Outputs.Clear();
         GUnrealEd->Exec(GetEditorWorld(), *Command, Outputs);
     }
@@ -528,11 +532,10 @@ static JObject MakeActorSummary(AActor* Actor)
 
     JArray Components;
     for (auto& C : Actor->GetComponents()) {
-        JObject Tmp({
+        Components.Add(JObject({
             { "typeName", C->GetClass()->GetName() },
             { "name", C->GetName() },
-            });
-        Components.Add(Tmp);
+            }));
     }
     Ret["components"] = Components;
     return Ret;
@@ -671,6 +674,47 @@ bool FHTTPLinkModule::OnActorDelete(const FHttpServerRequest& Request, const FHt
 bool FHTTPLinkModule::OnActorMerge(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
 {
     // todo
+    return Serve(Result);
+}
+
+bool FHTTPLinkModule::OnActorTransform(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
+{
+    bool R = false;
+    AActor* Target = nullptr;
+    if (auto Finder = GetActorFinder(Request)) {
+        Target = Finder();
+    }
+    if (Target) {
+        FVector Translation;
+        FQuat Rotation;
+        FVector Scale;
+        bool Absolute = true;
+        auto Set = GetQueryParams(Request, {
+            { "t", Translation }, { "r", Rotation }, { "s", Scale}, { "abs", Absolute},
+            });
+
+        if (Set.Contains("s")) {
+            if (!Absolute) {
+                Scale = Target->GetActorScale() * Scale;
+            }
+            Target->SetActorScale3D(Scale);
+            R = true;
+        }
+        if (Set.Contains("r")) {
+            if (!Absolute) {
+                Rotation = Target->GetActorRotation().Quaternion() * Rotation;
+            }
+            Target->SetActorRotation(Rotation);
+            R = true;
+        }
+        if (Set.Contains("t")) {
+            if (!Absolute) {
+                Translation = Target->GetActorLocation() + Translation;
+            }
+            Target->SetActorLocation(Translation);
+            R = true;
+        }
+    }
     return Serve(Result);
 }
 #pragma endregion Actor Commands

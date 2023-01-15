@@ -51,6 +51,7 @@ public:
     bool OnActorCreate(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
     bool OnActorDelete(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
     bool OnActorMerge(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
+    bool OnActorTransform(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
 
     // level commands
     bool OnLevelNew(const FHttpServerRequest& Request, const FHttpResultCallback& Result);
