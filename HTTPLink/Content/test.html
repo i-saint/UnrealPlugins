@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>HTTPLink Test</title>
+    <script src="three.js"></script>
+    <script>
+        const Host = "http://localhost:8110";
+
+        async function sendRequest(path, params = null) {
+            try {
+                let url = Host + path;
+                if (params != null) {
+                    url += `?json=${encodeURIComponent(JSON.stringify(params))}`;
+                }
+                const res = await fetch(url);
+                const json = await res.json();
+                return json;
+            }
+            catch (e) {
+            }
+            return null;
+        }
+
+        // create actor and return its GUID
+        async function createActorByAsset(assetPath, label) {
+            let res = await sendRequest("/actor/create", { assetPath: assetPath, label: label });
+            return res != null && res.result ? res.actor.guid : null;
+        }
+
+        // position: Vector, can be null
+        // rotation: Quaternion, can be null
+        // scale: Vector, can be null
+        async function moveActor(actorGuid, position, rotation = null, scale = null, abs = true) {
+            let params = { guid: actorGuid };
+            if (position != null)
+                params.t = position;
+            if (rotation != null)
+                params.r = { x: rotation._x, y: rotation._y, z: rotation._z, w: rotation._w };
+            if (scale != null)
+                params.s = scale;
+            if (!abs)
+                params.abs = false;
+
+            let res = await sendRequest("/actor/transform", params);
+            return res != null ? res.result : false;
+        }
+
+        async function doTest() {
+            const assetList = await sendRequest("/asset/list");
+            if (assetList != null) {
+                const cubeAsset = assetList.find(e => e.objectPath == "/Engine/BasicShapes/Cube.Cube");
+                const sphereAsset = assetList.find(e => e.objectPath == "/Engine/BasicShapes/Sphere.Sphere");
+
+                const count = 8;
+                for (let i = 0; i < count; ++i) {
+                    let angle = (360.0 / count) * i;
+                    let angleRad = THREE.MathUtils.degToRad(angle);
+                    let rot = (new THREE.Quaternion()).setFromEuler(new THREE.Euler(0, 0, angleRad));
+                    let pos = (new THREE.Vector3(300, 0, 50)).applyQuaternion(rot);
+
+                    let cube = await createActorByAsset(cubeAsset.objectPath, `Cube${i}`);
+                    moveActor(cube, pos, rot);
+
+                    let sphere = await createActorByAsset(sphereAsset.objectPath, `Sphere${i}`);
+                    pos.z += 100;
+                    moveActor(sphere, pos, rot);
+                }
+            }
+        }
+    </script>
+</head>
+<body>
+    <div id="inputs">
+        <input type="button" onclick="doTest()" value="Execute Test" />
+    </div>
+    <div id="outputs">
+        <textarea id="outputText" name="outputText" rows="32" cols="128"></textarea>
+        <img id="outputImage" />
+    </div>
+</body>
+</html>

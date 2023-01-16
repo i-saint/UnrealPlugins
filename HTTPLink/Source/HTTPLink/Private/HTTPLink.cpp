@@ -675,9 +675,9 @@ bool FHTTPLinkModule::OnActorCreate(const FHttpServerRequest& Request, const FHt
         });
 
     AActor* Actor = nullptr;
-    auto SpawnActorScope = [&](auto&& Body) {
+    auto SpawnActorScope = [&](auto&& SpawnActor) {
         auto UndoScope = FScopedTransaction(LOCTEXT("OnCreateActor", "OnCreateActor"));
-        Body();
+        Actor = SpawnActor();
         if (Actor && !Label.IsEmpty()) {
             Actor->SetActorLabel(Label);
         }
@@ -687,14 +687,14 @@ bool FHTTPLinkModule::OnActorCreate(const FHttpServerRequest& Request, const FHt
         FAssetData AssetData = GetAssetByObjectPath(AssetPath);
         if (AssetData.IsValid()) {
             SpawnActorScope([&]() {
-                Actor = GetEditorActorSubsystem()->SpawnActorFromObject(AssetData.GetAsset(), Location);
+                return GetEditorActorSubsystem()->SpawnActorFromObject(AssetData.GetAsset(), Location);
                 });
         }
     }
     else if (!ClassName.IsEmpty()) {
         if (UClass* C = FEditorClassUtils::GetClassFromString(ClassName)) {
             SpawnActorScope([&]() {
-                Actor = GetEditorActorSubsystem()->SpawnActorFromClass(C, Location);;
+                return GetEditorActorSubsystem()->SpawnActorFromClass(C, Location);
                 });
         }
     }
