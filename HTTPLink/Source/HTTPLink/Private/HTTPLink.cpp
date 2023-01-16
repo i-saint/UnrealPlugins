@@ -15,6 +15,7 @@
 #include "ScopedTransaction.h"
 #include "Misc/FileHelper.h"
 #include "Serialization/MemoryWriter.h"
+#include "EditorClassUtils.h"
 
 
 #if PLATFORM_WINDOWS
@@ -130,6 +131,19 @@ inline bool GetQueryParam(const FHttpServerRequest& Request, const char* Name, F
         float X, Y, Z;
         if (swscanf_s(**V, TEXT("%f,%f,%f"), &X, &Y, &Z) == 3) {
             Dst = FVector(X, Y, Z);
+        }
+        return true;
+    }
+    return false;
+}
+// FQuat
+template<>
+inline bool GetQueryParam(const FHttpServerRequest& Request, const char* Name, FQuat& Dst)
+{
+    if (auto* V = Request.QueryParams.Find(Name)) {
+        float X, Y, Z, W;
+        if (swscanf_s(**V, TEXT("%f,%f,%f,%f"), &X, &Y, &Z, &W) == 4) {
+            Dst = FQuat(X, Y, Z, W);
         }
         return true;
     }
@@ -310,14 +324,41 @@ static FString GetObectPathStr(const FAssetData& Asset)
 #endif
 }
 
+static IAssetRegistry& GetAssetRegistry()
+{
+    static IAssetRegistry& Instance = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry").Get();
+    return Instance;
+}
+
 static FAssetData GetAssetByObjectPath(FString Path)
 {
-    static auto& AssetRegistry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry").Get();
 #if ENGINE_MAJOR_VERSION >= 5 && ENGINE_MINOR_VERSION >= 1
-    return AssetRegistry.GetAssetByObjectPath(FSoftObjectPath(Path));
+    return GetAssetRegistry().GetAssetByObjectPath(FSoftObjectPath(Path));
 #else
-    return AssetRegistry.GetAssetByObjectPath(FName(Path));
+    return GetAssetRegistry().GetAssetByObjectPath(FName(Path));
 #endif
+}
+
+static TArray<FAssetData> GetAssetsByClass(const FName& ClassName)
+{
+    TArray<FAssetData> Ret;
+#if ENGINE_MAJOR_VERSION >= 5 && ENGINE_MINOR_VERSION >= 1
+    GetAssetRegistry().GetAssetsByClass(UClass::TryConvertShortTypeNameToPathName<UStruct>(*ClassName.ToString()), Ret);
+#else
+    GetAssetRegistry().GetAssetsByClass(ClassName, Ret);
+#endif
+    return Ret;
+}
+template<class T>
+static TArray<FAssetData> GetAssetsByClass()
+{
+    return GetAssetsByClass(T::StaticClass()->GetFName());
+}
+
+static UEditorActorSubsystem* GetEditorActorSubsystem()
+{
+    static UEditorActorSubsystem* Instance = GEditor->GetEditorSubsystem<UEditorActorSubsystem>();
+    return Instance;
 }
 #pragma endregion Utilities
 
@@ -628,22 +669,33 @@ bool FHTTPLinkModule::OnActorCreate(const FHttpServerRequest& Request, const FHt
     FString Label;
     FVector Location = FVector::Zero();
     FString AssetPath;
+    FString ClassName; // 接辞語を除いた class 名 (例: "Actor", "StaticMeshActor", etc)
     GetQueryParams(Request, {
-        { "label", Label }, { "location", Location }, { "assetpath", AssetPath}
+        { "label", Label }, { "location", Location }, { "assetPath", AssetPath}, { "className", ClassName}
         });
 
     AActor* Actor = nullptr;
+    auto SpawnActorScope = [&](auto&& Body) {
+        auto UndoScope = FScopedTransaction(LOCTEXT("OnCreateActor", "OnCreateActor"));
+        Body();
+        if (Actor && !Label.IsEmpty()) {
+            Actor->SetActorLabel(Label);
+        }
+    };
+
     if (!AssetPath.IsEmpty()) {
         FAssetData AssetData = GetAssetByObjectPath(AssetPath);
         if (AssetData.IsValid()) {
-            auto UndoScope = FScopedTransaction(LOCTEXT("OnCreateActor", "OnCreateActor"));
-            auto* EditorActorSubsystem = GEditor->GetEditorSubsystem<UEditorActorSubsystem>();
-            Actor = EditorActorSubsystem->SpawnActorFromObject(AssetData.GetAsset(), Location);
-            if (Actor) {
-                if (!Label.IsEmpty()) {
-                    Actor->SetActorLabel(Label);
-                }
-            }
+            SpawnActorScope([&]() {
+                Actor = GetEditorActorSubsystem()->SpawnActorFromObject(AssetData.GetAsset(), Location);
+                });
+        }
+    }
+    else if (!ClassName.IsEmpty()) {
+        if (UClass* C = FEditorClassUtils::GetClassFromString(ClassName)) {
+            SpawnActorScope([&]() {
+                Actor = GetEditorActorSubsystem()->SpawnActorFromClass(C, Location);;
+                });
         }
     }
 
@@ -674,7 +726,7 @@ bool FHTTPLinkModule::OnActorDelete(const FHttpServerRequest& Request, const FHt
 bool FHTTPLinkModule::OnActorMerge(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
 {
     // todo
-    return Serve(Result);
+    return ServeJson(Result, false);
 }
 
 bool FHTTPLinkModule::OnActorTransform(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
@@ -715,7 +767,7 @@ bool FHTTPLinkModule::OnActorTransform(const FHttpServerRequest& Request, const 
             R = true;
         }
     }
-    return Serve(Result);
+    return ServeJson(Result, R);
 }
 #pragma endregion Actor Commands
 
@@ -724,7 +776,7 @@ bool FHTTPLinkModule::OnActorTransform(const FHttpServerRequest& Request, const 
 bool FHTTPLinkModule::OnLevelNew(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
 {
     if (!GEditor) {
-        return Serve(Result);
+        return ServeJson(Result, false);
     }
 
     bool R = false;
@@ -748,7 +800,7 @@ bool FHTTPLinkModule::OnLevelNew(const FHttpServerRequest& Request, const FHttpR
 bool FHTTPLinkModule::OnLevelLoad(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
 {
     if (!GEditor) {
-        return Serve(Result);
+        return ServeJson(Result, false);
     }
 
     bool R = false;
@@ -767,7 +819,7 @@ bool FHTTPLinkModule::OnLevelLoad(const FHttpServerRequest& Request, const FHttp
 bool FHTTPLinkModule::OnLevelSave(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
 {
     if (!GEditor) {
-        return Serve(Result);
+        return ServeJson(Result, false);
     }
 
     bool R = false;
@@ -813,7 +865,7 @@ bool FHTTPLinkModule::OnAssetList(const FHttpServerRequest& Request, const FHttp
 bool FHTTPLinkModule::OnAssetImport(const FHttpServerRequest& Request, const FHttpResultCallback& Result)
 {
     // todo
-    return Serve(Result);
+    return ServeJson(Result, false);
 }
 #pragma endregion Asset Commands
 
